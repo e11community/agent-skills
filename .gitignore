@@ -1,0 +1,47 @@
+# Agents
+.claude/settings.local.json
+
+# typescript
+*.d.ts
+*.js
+!.prettierrc.js
+node_modules
+
+# cdktf
+cdktf.out
+cdktf.log
+*terraform.*.tfstate*
+.gen
+.terraform
+tsconfig.tsbuildinfo
+
+# jest
+!jest.config.js
+!setup.js
+
+# macos
+.DS_Store
+
+# yarn
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+
+# terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraform.lock.hcl
+
+# Output
+hcl/output/

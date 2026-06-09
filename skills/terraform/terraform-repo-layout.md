@@ -1,326 +1,126 @@
 # Terraform Multi-Environment GCP Infrastructure — Repo Reference
 
 > Production scaffold targeting GCP, GCP Beta, Firebase, Cloudflare, Mailgun,
-> and Rollbar. Five environments with separate root modules per env, one GCS
-> state bucket per GCP project, and GitHub Actions CI/CD.
+> and Rollbar. Five environments (dev, ci, qa, demo, prod), separate root
+> modules per env+stack, one GCS state bucket per GCP project, and GitHub
+> Actions CI/CD.
+>
+> **Placeholders:** `PLATFORM` is the platform/project short name — replace it
+> with the real name in a realized repo. Module names (`networking`, `cloud-run`,
+> …) and stack names (`main`) are examples — use the repo's actual names. The
+> five environment names are fixed and always exist. See `SKILL.md` for
+> conventions; this file is the structural reference.
 
 ---
 
 ## Directory Tree
 
 ```
-talorai-infrastructure/
+PLATFORM-infrastructure/
 │
 ├── .github/
 │   └── workflows/
-│       ├── tf-plan.yml                    # PR → plan per env
-│       ├── tf-apply.yml                   # Merge to main → apply per env
-│       └── tf-drift.yml                   # Scheduled drift detection
-|
-├── AGENTS.md                          # Context for AI coding agents
-├── CLAUDE.md                          # Claude Code–specific memory
-├── README.md                          # Human-readable project overview
-|
-├── hcl/
-|   ├── AGENTS.md                          # Context for AI coding agents
-|   ├── CLAUDE.md                          # Claude Code–specific memory
-|   ├── README.md                          # Human-readable project overview
-│   |
-|   ├── modules/                               # Shared child modules
-|   |   ├── networking/                        # VPC, subnets, firewall, Cloud NAT
-│   |   |   ├── main.tf
-│   │   |   ├── variables.tf
-│   │   |   ├── outputs.tf
-│   │   |   └── versions.tf
-|   |   ├── gke/                               # GKE cluster + node pools
-│   │   |   ├── main.tf
-│   │   |   ├── variables.tf
-│   │   |   ├── outputs.tf
-│   │   |   └── versions.tf
-|   |   ├── cloud-sql/                         # Cloud SQL (Postgres/MySQL)
-│   │   |   ├── main.tf
-│   │   |   ├── variables.tf
-│   │   |   ├── outputs.tf
-│   │   |   └── versions.tf
-|   |   ├── cloud-run/                         # Cloud Run services
-│   │   |   ├── main.tf
-│   │   |   ├── variables.tf
-│   │   |   ├── outputs.tf
-│   │   |   └── versions.tf
-|   |   ├── firebase/                          # Firebase project, web apps, auth
-│   │   |   ├── main.tf
-│   │   |   ├── variables.tf
-│   │   |   ├── outputs.tf
-│   │   |   └── versions.tf
-|   |   ├── dns/                               # Cloudflare zones, records, rules
-│   │   |   ├── main.tf
-│   │   |   ├── variables.tf
-│   │   |   ├── outputs.tf
-│   │   |   └── versions.tf
-|   |   ├── email/                             # Mailgun domains, routes, creds
-│   │   |   ├── main.tf
-│   │   |   ├── variables.tf
-│   │   |   ├── outputs.tf
-│   │   |   └── versions.tf
-|   |   └── observability/                     # Rollbar projects, teams, alerts
-│   │       ├── main.tf
-│   │       ├── variables.tf
-│   │       ├── outputs.tf
-│   │       └── versions.tf
-│   |
-|   ├── environments/
-│   |   ├── dev/
-│   │   |   ├── main.tf                        # Wires modules — may include experimental ones
-│   │   |   ├── providers.tf
-│   │   |   ├── variables.tf
-│   │   |   ├── outputs.tf
-│   │   |   ├── versions.tf
-│   │   |   ├── backend.tf
-│   │   |   ├── locals.tf
-│   │   |   ├── data.tf
-│   │   |   └── terraform.tfvars               # Non-sensitive values for this env
-│   |   ├── ci/
-│   │   |   ├── main.tf
-│   │   |   ├── providers.tf
-│   │   |   ├── variables.tf
-│   │   |   ├── outputs.tf
-│   │   |   ├── versions.tf
-│   │   |   ├── backend.tf
-│   │   |   ├── locals.tf
-│   │   |   ├── data.tf
-│   │   |   └── terraform.tfvars
-│   |   ├── qa/
-│   │   |   ├── main.tf
-│   │   |   ├── providers.tf
-│   │   |   ├── variables.tf
-│   │   |   ├── outputs.tf
-│   │   |   ├── versions.tf
-│   │   |   ├── backend.tf
-│   │   |   ├── locals.tf
-│   │   |   ├── data.tf
-│   │   |   └── terraform.tfvars
-│   |   ├── prod/
-│   │   |   ├── main.tf                        # Only battle-tested modules
-│   │   |   ├── providers.tf
-│   │   |   ├── variables.tf
-│   │   |   ├── outputs.tf
-│   │   |   ├── versions.tf
-│   │   |   ├── backend.tf
-│   │   |   ├── locals.tf
-│   │   |   ├── data.tf
-│   │   |   └── terraform.tfvars
-│   |   └── demo/
-│   │       ├── main.tf
-│   │       ├── providers.tf
-│   │       ├── variables.tf
-│   │       ├── outputs.tf
-│   │       ├── versions.tf
-│   │       ├── backend.tf
-│   │       ├── locals.tf
-│   │       ├── data.tf
-│   |       └── terraform.tfvars
-│   |
-|   ├── tests/                                 # Native terraform test (v1.6+)
-│   |   ├── networking.tftest.hcl
-│   |   └── dns.tftest.hcl
-│   |
-|   └── scripts/
-│       └── tf-init.sh                         # Convenience wrapper
+│       ├── tf-plan.yml                 # Reusable plan, keyed by project_id
+│       ├── tf-plan-matrix.yml          # PR → detect changed envs → fan out
+│       ├── tf-apply.yml                # Push/dispatch → apply
+│       └── tf-drift.yml                # Scheduled drift detection
 │
-├── .vscode/
-│   └── settings.json                      # Format-on-save for TF + JS/TS
-│
-├── .pre-commit-config.yaml
-├── .tflint.hcl
+├── README.md
 ├── .terraform-version
+├── .tflint.hcl
+├── .pre-commit-config.yaml
 ├── .prettierignore
 ├── .eslintignore
 ├── .editorconfig
-└── .gitignore
+├── .gitignore
+├── .vscode/
+│   └── settings.json
+│
+└── hcl/
+    ├── AGENTS.md                       # Thin pointer to the terraform skill + project context
+    ├── CLAUDE.md                       # Thin pointer to the terraform skill + project context
+    ├── README.md
+    │
+    ├── modules/                        # Shared child modules (names are examples)
+    │   ├── networking/                 # VPC, subnets, firewall, Cloud NAT
+    │   │   ├── main.tf
+    │   │   ├── variables.tf
+    │   │   ├── outputs.tf
+    │   │   └── versions.tf
+    │   ├── gke/                         # GKE cluster + node pools
+    │   ├── cloud-sql/                   # Cloud SQL (Postgres/MySQL)
+    │   ├── cloud-run/                   # Cloud Run services
+    │   ├── firebase/                    # Firebase project, web apps, auth
+    │   ├── dns/                         # Cloudflare zones, records, rules
+    │   ├── email/                       # Mailgun domains, routes, creds
+    │   └── observability/               # Rollbar projects, teams, alerts
+    │       ├── main.tf
+    │       ├── variables.tf
+    │       ├── outputs.tf
+    │       ├── versions.tf
+    │       └── iam.tf                   # Only when the module manages IAM
+    │
+    ├── environments/                    # One root module per env + stack
+    │   ├── dev/
+    │   │   └── main/                     # `main` is the example default stack
+    │   │       ├── main.tf               # Wires modules — may include experimental ones
+    │   │       ├── providers.tf
+    │   │       ├── variables.tf
+    │   │       ├── outputs.tf
+    │   │       ├── versions.tf
+    │   │       ├── backend.tf
+    │   │       ├── locals.tf
+    │   │       ├── data.tf
+    │   │       └── terraform.tfvars      # Non-sensitive values for this env+stack
+    │   ├── ci/
+    │   │   └── main/                      # (same file set)
+    │   ├── qa/
+    │   │   └── main/
+    │   ├── prod/
+    │   │   └── main/                      # Only battle-tested modules
+    │   └── demo/
+    │       └── main/
+    │
+    ├── tests/                            # Native terraform test (v1.6+)
+    │   ├── networking.tftest.hcl
+    │   └── dns.tftest.hcl
+    │
+    └── scripts/
+        └── tf-init.sh                    # Convenience wrapper
 ```
 
----
-
-## AGENTS.md
-
-````markdown
-# AGENTS.md — AI Agent Context for terraform-infra
-
-## Project Summary
-
-This repo provisions cloud infrastructure across five environments (dev, ci, qa,
-prod, demo). Each environment is a separate root module under `environments/<env>/`
-with its own `main.tf` that explicitly declares which child modules it uses.
-Shared child modules live in `modules/`.
-
-## Architecture Decision: Separate Root Modules Per Environment
-
-We use separate root modules (not a single root with feature-flag booleans)
-because environments have structural variance — new modules are rolled out to
-lower environments before being promoted to upper environments. The diff in a PR
-to promote a module to prod is literally "add these lines to
-`environments/prod/main.tf`."
-
-Do NOT use `count` with `enable_*` booleans to control module presence. The
-module block is either present in an env's `main.tf` or it isn't.
-
-## Providers (verified registry sources)
-
-| Service    | Provider source         | Notes                                                                                                                                                                                                                      |
-| ---------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GCP        | `hashicorp/google`      | registry.terraform.io/providers/hashicorp/google                                                                                                                                                                           |
-| GCP Beta   | `hashicorp/google-beta` | registry.terraform.io/providers/hashicorp/google-beta                                                                                                                                                                      |
-| Firebase   | `hashicorp/google-beta` | No separate firebase provider. Resources like `google_firebase_project`, `google_firebase_web_app`, `google_identity_platform_config` all live in google-beta. See firebase.google.com/docs/projects/terraform/get-started |
-| Cloudflare | `cloudflare/cloudflare` | registry.terraform.io/providers/cloudflare/cloudflare                                                                                                                                                                      |
-| Mailgun    | `wgebis/mailgun`        | registry.terraform.io/providers/wgebis/mailgun                                                                                                                                                                             |
-| Rollbar    | `rollbar/rollbar`       | registry.terraform.io/providers/rollbar/rollbar                                                                                                                                                                            |
-
-## Environment → GCP Project → State Bucket Mapping
-
-Each environment maps to a dedicated GCP project with its own state bucket:
-
-| Env  | GCP Project ID    | State Bucket              |
-| ---- | ----------------- | ------------------------- |
-| dev  | myapp-dev-123456  | myapp-dev-123456-tfstate  |
-| ci   | myapp-ci-234567   | myapp-ci-234567-tfstate   |
-| qa   | myapp-qa-345678   | myapp-qa-345678-tfstate   |
-| prod | myapp-prod-789012 | myapp-prod-789012-tfstate |
-| demo | myapp-demo-567890 | myapp-demo-567890-tfstate |
-
-## Stack Emulation
-
-"Stacks" (the CDKTF concept) are emulated via the GCS `prefix` value in each
-environment's `backend.tf`. Multiple root configs or the same root config with
-different prefixes = different stacks within the same project bucket.
-
-Convention: `<stack-name>` (e.g. `services`, `frontend`, `backend`)
-
-## Directory Conventions
-
-- `modules/<name>/` — one child module per infrastructure concern
-- Each module has exactly: main.tf, variables.tf, outputs.tf, versions.tf
-- `environments/<env>/` — one root module per environment
-- Each env root has: main.tf, providers.tf, variables.tf, outputs.tf,
-  versions.tf, backend.tf, locals.tf, data.tf, terraform.tfvars
-- `tests/*.tftest.hcl` — native Terraform tests (v1.6+)
-
-## Key Commands
-
-```bash
-# Work in a specific environment
-cd environments/dev
-terraform init
-terraform plan -out=tfplan
-terraform apply tfplan
-
-# Or from repo root with chdir
-terraform -chdir=environments/dev init
-terraform -chdir=environments/dev plan
-
-# Run tests (from modules or test dir)
-terraform test
-
-# Lint (from repo root, recursive)
-tflint --init && tflint --recursive
-
-# Format check
-terraform fmt -check -recursive
-```
-````
-
-## Promoting Modules Across Environments
-
-1. Build the module in `modules/<name>/` with full variable/output contracts
-2. Wire it into `environments/dev/main.tf` first
-3. After validation, copy the module block to ci → qa → prod in separate PRs
-4. The PR diff IS the promotion — reviewers see exactly what's introduced
-5. Do NOT use feature-flag booleans (`enable_x = true/false`)
-
-## State & Backend
-
-- One GCS bucket per GCP project (bucket name = `<project-id>-remote-state`)
-- Backend block in each env's `backend.tf` has hardcoded bucket + prefix
-- Backend CANNOT use interpolation — this is a hard Terraform limitation
-  (backend is resolved during `init`, before any HCL evaluation)
-- Never run `terraform state` commands manually — use `moved`, `import`, or
-  `removed` blocks in HCL instead
-
-## Naming Conventions
-
-Labels always include: `environment`, `managed_by = "terraform"`, `repo`, `platform=talorai`
-
-## Secrets
-
-- Provider credentials: GitHub Actions secrets + Workload Identity Federation
-- App-level secrets: GCP Secret Manager, referenced via data sources
-- NEVER put secrets in .tfvars files or backend.tf
-
-## Formatting & Linting
-
-- `.tf` and `.tfvars` files: `terraform fmt` (formatting) + `tflint` (linting)
-- Prettier and ESLint do NOT understand HCL — `*.tf` is in ignore files
-- VSCode: `hashicorp.terraform` extension with format-on-save enabled
-- Pre-commit: `pre-commit` framework with terraform-fmt and tflint hooks
-
-## CI/CD
-
-- GitHub Actions with service key files stored as repo environment secrets
-- Secret `GCP_SA_KEY` is mainly used. But if a service performs compute, use secret `GCP_COMPUTE_SA_KEY`.
-- PR → `terraform plan` per env (posted as PR comment)
-- Merge to main → `terraform apply` (sequential: dev → ci → qa → prod → demo)
-- Drift detection on schedule, auto-opens GitHub Issues
-
-## Module Authoring Rules
-
-1. Every variable must have a `description` and a `type`
-2. Use `validation` blocks on variables where constraints exist
-3. Expose only what consumers need via `outputs.tf`
-4. Pin provider version constraints in each module's `versions.tf`
-5. Never hardcode project IDs, project numbers, locations, regions, or zones — accept them as variables
-6. Source path from env root to module: `source = "../../modules/<name>"`
-
-## Things to Watch Out For
-
-- Firebase resources require `google-beta` provider, not `google`
-- Mailgun provider (`wgebis/mailgun`) requires `region` ("us" or "eu")
-- Rollbar needs account-level API key for projects, project-level for notifications
-- Cloudflare API tokens should be scoped per zone, not global keys
-- `google_app_engine_application` silently provisions a Firestore in Datastore mode
-- As of Oct 2024, default Cloud Storage bucket can't be provisioned via TF for Firebase
-- Backend blocks CANNOT use variables or interpolation of any kind
-
-````
+A **stack** is a root-module subdirectory under an environment
+(`environments/<env>/<stack>/`). Each stack has its own `backend.tf` whose GCS
+`prefix` equals the stack name, so multiple stacks share one project state
+bucket. `main` is the conventional default; add stacks by creating sibling
+subdirectories with the same file set.
 
 ---
 
-## CLAUDE.md
+## AGENTS.md / CLAUDE.md
 
-```markdown
-# CLAUDE.md
-
-Read AGENTS.md at the repo root for full project context, conventions, and commands.
-
-## Additional Claude Code Notes
-
-- Each environment is a separate root module at `environments/<env>/`.
-  Always `cd` into the correct env directory before running terraform commands.
-- When editing Terraform, run `terraform fmt` and `terraform validate` after changes.
-- Prefer `moved` blocks over `terraform state mv`.
-- Prefer `import` blocks over `terraform import` CLI.
-- Prefer `removed` blocks with `lifecycle { destroy = false }` over `terraform state rm`.
-- When adding a new child module, scaffold with: main.tf, variables.tf, outputs.tf, versions.tf.
-- When promoting a module to an env, copy the module block from a lower env's main.tf.
-  Do not add feature-flag booleans.
-- Source paths from env roots to modules use `../../modules/<name>`.
-- When suggesting provider resource names, verify against the Terraform Registry.
-  Do not guess names from patterns.
-````
+Conventions, commands, and authoring rules live in this skill's `SKILL.md`. In a
+realized repo, keep `hcl/AGENTS.md` and `hcl/CLAUDE.md` as thin files that point
+to the terraform skill and hold only repo-specific context (real platform name,
+real module/stack names, anything not derivable from the code).
 
 ---
 
-## Shared Files (duplicated per env — this is intentional)
+## Environment → GCP Project → State Bucket
 
-### environments/\<env\>/versions.tf
+| Env  | GCP Project ID    | State Bucket                   |
+| ---- | ----------------- | ------------------------------ |
+| dev  | PLATFORM-dev-100  | PLATFORM-dev-100-remote-state  |
+| ci   | PLATFORM-ci-100   | PLATFORM-ci-100-remote-state   |
+| qa   | PLATFORM-qa-100   | PLATFORM-qa-100-remote-state   |
+| demo | PLATFORM-demo-100 | PLATFORM-demo-100-remote-state |
+| prod | PLATFORM-prod-100 | PLATFORM-prod-100-remote-state |
+
+---
+
+## Shared Files (duplicated per env+stack — this is intentional)
+
+### environments/\<env\>/\<stack\>/versions.tf
 
 ```hcl
 terraform {
@@ -351,50 +151,48 @@ terraform {
 }
 ```
 
-### environments/dev/backend.tf
+### environments/dev/main/backend.tf
 
 ```hcl
 # Remember, no var or interpolation
 terraform {
   backend "gcs" {
-    bucket = "myapp-dev-100-remote-state"
+    bucket = "PLATFORM-dev-100-remote-state"
     prefix = "main"
   }
 }
 ```
 
-### environments/prod/backend.tf
+### environments/prod/main/backend.tf
 
 ```hcl
 # Remember, no var or interpolation
 terraform {
   backend "gcs" {
-    bucket = "myapp-prod-100-remote-state"
+    bucket = "PLATFORM-prod-100-remote-state"
     prefix = "main"
   }
 }
 ```
 
-> **Why hardcode the backend?** Each directory IS a specific environment, so
-> there's no ambiguity. No `-backend-config` gymnastics needed. If you want
-> a different stack in the same project, create a second env directory (or a
-> second root module) with a different `prefix`.
-
+> **Why hardcode the backend?** Each directory IS a specific env+stack, so there
+> is no ambiguity. The `prefix` is the stack name.
+>
 > **Can you interpolate the bucket name?** No. The `backend` block is resolved
 > during `terraform init` before any HCL evaluation. Variables, locals, and data
-> sources are not available. Use hardcoded values, `-backend-config` flags, or
-> a wrapper script.
+> sources are not available. Use hardcoded values, `-backend-config` flags, or a
+> wrapper script.
 
-### environments/\<env\>/providers.tf
+### environments/\<env\>/\<stack\>/providers.tf
 
 ```hcl
-# ── GCP ───────────────────────────────────────────────────────────────────
+# ── GCP ─────────────────────────────────────────────────────────────────────
 provider "google" {
   project = var.project_id
   region  = var.gcp_region
 }
 
-# ── GCP Beta (required for Firebase + beta features) ─────────────────────
+# ── GCP Beta (required for Firebase + beta features) ─────────────────────────
 provider "google-beta" {
   project               = var.project_id
   region                = var.gcp_region
@@ -406,42 +204,42 @@ provider "google-beta" {
   user_project_override = false
 }
 
-# ── Cloudflare ────────────────────────────────────────────────────────────
+# ── Cloudflare ───────────────────────────────────────────────────────────────
 provider "cloudflare" {
   api_token = var.cloudflare_api_token
 }
 
-# ── Mailgun ───────────────────────────────────────────────────────────────
+# ── Mailgun ───────────────────────────────────────────────────────────────────
 provider "mailgun" {
   api_key = var.mailgun_api_key
   region  = var.mailgun_region
 }
 
-# ── Rollbar ───────────────────────────────────────────────────────────────
+# ── Rollbar ────────────────────────────────────────────────────────────────────
 provider "rollbar" {
   api_key = var.rollbar_api_key
 }
 ```
 
-### environments/\<env\>/variables.tf
+### environments/\<env\>/\<stack\>/variables.tf
 
 ```hcl
-# ── Environment ───────────────────────────────────────────────────────────
+# ── Environment ──────────────────────────────────────────────────────────────
 variable "environment" {
-  description = "Environment name: dev, ci, qa, prod, demo"
+  description = "Environment name: dev, ci, qa, demo, prod"
   type        = string
   validation {
-    condition     = contains(["dev", "ci", "qa", "prod", "demo"], var.environment)
-    error_message = "environment must be one of: dev, ci, qa, prod, demo"
+    condition     = contains(["dev", "ci", "qa", "demo", "prod"], var.environment)
+    error_message = "environment must be one of: dev, ci, qa, demo, prod"
   }
 }
 
 variable "project_prefix" {
-  description = "Short prefix for resource naming (e.g. 'myapp')"
+  description = "Short prefix for resource naming and labels (e.g. 'PLATFORM')"
   type        = string
 }
 
-# ── GCP ───────────────────────────────────────────────────────────────────
+# ── GCP ─────────────────────────────────────────────────────────────────────
 variable "project_id" {
   description = "GCP project ID for this environment"
   type        = string
@@ -459,7 +257,7 @@ variable "gcp_zone" {
   default     = "us-central1-a"
 }
 
-# ── Cloudflare ────────────────────────────────────────────────────────────
+# ── Cloudflare ───────────────────────────────────────────────────────────────
 variable "cloudflare_api_token" {
   description = "Cloudflare scoped API token"
   type        = string
@@ -476,7 +274,7 @@ variable "apex_domain" {
   type        = string
 }
 
-# ── Mailgun ───────────────────────────────────────────────────────────────
+# ── Mailgun ───────────────────────────────────────────────────────────────────
 variable "mailgun_api_key" {
   description = "Mailgun API key"
   type        = string
@@ -493,7 +291,7 @@ variable "mailgun_region" {
   }
 }
 
-# ── Rollbar ───────────────────────────────────────────────────────────────
+# ── Rollbar ────────────────────────────────────────────────────────────────────
 variable "rollbar_api_key" {
   description = "Rollbar account-level API key"
   type        = string
@@ -501,14 +299,14 @@ variable "rollbar_api_key" {
 }
 ```
 
-### environments/\<env\>/locals.tf
+### environments/\<env\>/\<stack\>/locals.tf
 
 ```hcl
 locals {
   common_labels = {
-    environment        = var.environment
-    managed_by = "terraform"
-    platform       = "myapp"
+    environment = var.environment
+    managed_by  = "terraform"
+    platform    = var.project_prefix
   }
 
   is_production = var.environment == "prod"
@@ -517,30 +315,33 @@ locals {
 
 ---
 
-## Per-Environment main.tf Examples
+## Per-Stack main.tf Examples
 
-### environments/dev/main.tf — Includes experimental modules
+Module source paths from a stack root go up three levels:
+`../../../modules/<name>` (`<stack>` → `<env>` → `environments` → `hcl`).
+
+### environments/dev/main/main.tf — includes experimental modules
 
 ```hcl
-# ── Networking ────────────────────────────────────────────────────────────
+# ── Networking ────────────────────────────────────────────────────────────────
 module "networking" {
-  source = "../../modules/networking"
+  source = "../../../modules/networking"
 
-  gcp_region  = var.gcp_region
-  labels      = local.common_labels
+  gcp_region = var.gcp_region
+  labels     = local.common_labels
 }
 
-# ── Cloud Run ─────────────────────────────────────────────────────────────
+# ── Cloud Run ──────────────────────────────────────────────────────────────────
 module "cloud_run" {
-  source = "../../modules/cloud-run"
+  source = "../../../modules/cloud-run"
 
-  gcp_region  = var.gcp_region
-  labels      = local.common_labels
+  gcp_region = var.gcp_region
+  labels     = local.common_labels
 }
 
-# ── Firebase ──────────────────────────────────────────────────────────────
+# ── Firebase ───────────────────────────────────────────────────────────────────
 module "firebase" {
-  source = "../../modules/firebase"
+  source = "../../../modules/firebase"
 
   project_id  = var.project_id
   environment = var.environment
@@ -552,9 +353,9 @@ module "firebase" {
   }
 }
 
-# ── DNS (Cloudflare) ─────────────────────────────────────────────────────
+# ── DNS (Cloudflare) ────────────────────────────────────────────────────────────
 module "dns" {
-  source = "../../modules/dns"
+  source = "../../../modules/dns"
 
   zone_id         = var.cloudflare_zone_id
   apex_domain     = var.apex_domain
@@ -563,55 +364,55 @@ module "dns" {
   mailgun_records = module.email.dns_records
 }
 
-# ── Email (Mailgun) ──────────────────────────────────────────────────────
+# ── Email (Mailgun) ─────────────────────────────────────────────────────────────
 module "email" {
-  source = "../../modules/email"
+  source = "../../../modules/email"
 
   apex_domain = "mail.${var.apex_domain}"
   environment = var.environment
 }
 
-# ── Observability (Rollbar) ──────────────────────────────────────────────
+# ── Observability (Rollbar) ─────────────────────────────────────────────────────
 module "observability" {
-  source = "../../modules/observability"
+  source = "../../../modules/observability"
 
-  project_name = local.name_prefix
+  project_name = var.project_prefix
   environment  = var.environment
 }
 
-# ── EXPERIMENTAL: New service being tested in dev only ────────────────────
-# This module will be promoted to ci/qa/prod after validation.
+# ── EXPERIMENTAL: new service being tested in dev only ──────────────────────────
+# Promote to ci/qa/prod/demo after validation.
 module "cloud_sql" {
-  source = "../../modules/cloud-sql"
+  source = "../../../modules/cloud-sql"
 
-  network_id  = module.networking.vpc_id
-  gcp_region  = var.gcp_region
-  labels      = local.common_labels
+  network_id = module.networking.vpc_id
+  gcp_region = var.gcp_region
+  labels     = local.common_labels
 }
 ```
 
-### environments/prod/main.tf — Only battle-tested modules
+### environments/prod/main/main.tf — only battle-tested modules
 
 ```hcl
-# ── Networking ────────────────────────────────────────────────────────────
+# ── Networking ────────────────────────────────────────────────────────────────
 module "networking" {
-  source = "../../modules/networking"
+  source = "../../../modules/networking"
 
-  gcp_region  = var.gcp_region
-  labels      = local.common_labels
+  gcp_region = var.gcp_region
+  labels     = local.common_labels
 }
 
-# ── Cloud Run ─────────────────────────────────────────────────────────────
+# ── Cloud Run ──────────────────────────────────────────────────────────────────
 module "cloud_run" {
-  source = "../../modules/cloud-run"
+  source = "../../../modules/cloud-run"
 
-  gcp_region  = var.gcp_region
-  labels      = local.common_labels
+  gcp_region = var.gcp_region
+  labels     = local.common_labels
 }
 
-# ── Firebase ──────────────────────────────────────────────────────────────
+# ── Firebase ───────────────────────────────────────────────────────────────────
 module "firebase" {
-  source = "../../modules/firebase"
+  source = "../../../modules/firebase"
 
   project_id  = var.project_id
   environment = var.environment
@@ -623,9 +424,9 @@ module "firebase" {
   }
 }
 
-# ── DNS (Cloudflare) ─────────────────────────────────────────────────────
+# ── DNS (Cloudflare) ────────────────────────────────────────────────────────────
 module "dns" {
-  source = "../../modules/dns"
+  source = "../../../modules/dns"
 
   zone_id         = var.cloudflare_zone_id
   apex_domain     = var.apex_domain
@@ -634,19 +435,19 @@ module "dns" {
   mailgun_records = module.email.dns_records
 }
 
-# ── Email (Mailgun) ──────────────────────────────────────────────────────
+# ── Email (Mailgun) ─────────────────────────────────────────────────────────────
 module "email" {
-  source = "../../modules/email"
+  source = "../../../modules/email"
 
   apex_domain = "notifications.${var.apex_domain}"
   environment = var.environment
 }
 
-# ── Observability (Rollbar) ──────────────────────────────────────────────
+# ── Observability (Rollbar) ─────────────────────────────────────────────────────
 module "observability" {
-  source = "../../modules/observability"
+  source = "../../../modules/observability"
 
-  project_name = local.name_prefix
+  project_name = var.project_prefix
   environment  = var.environment
 }
 
@@ -655,14 +456,14 @@ module "observability" {
 
 ---
 
-## Per-Environment terraform.tfvars Examples
+## Per-Stack terraform.tfvars Examples
 
-### environments/dev/terraform.tfvars
+### environments/dev/main/terraform.tfvars
 
 ```hcl
 environment    = "dev"
-platform = "myapp"
-project_id     = "myapp-dev-100"
+project_prefix = "PLATFORM"
+project_id     = "PLATFORM-dev-100"
 gcp_region     = "us-central1"
 gcp_zone       = "us-central1-a"
 apex_domain    = "dev.example.com"
@@ -671,12 +472,12 @@ cloudflare_zone_id = "abc123..."
 mailgun_region     = "us"
 ```
 
-### environments/prod/terraform.tfvars
+### environments/prod/main/terraform.tfvars
 
 ```hcl
 environment    = "prod"
-platform = "myapp"
-project_id     = "myapp-prod-100"
+project_prefix = "PLATFORM"
+project_id     = "PLATFORM-prod-100"
 gcp_region     = "us-central1"
 gcp_zone       = "us-central1-a"
 apex_domain    = "example.com"
@@ -774,288 +575,27 @@ resource "cloudflare_record" "mailgun" {
 
 ## GitHub Actions
 
-### .github/workflows/tf-plan.yml
+The full workflow YAML ships with this skill in `.github/workflows/` — install
+those files into `<project-root>/.github/workflows/` rather than re-authoring
+them here. Summary:
 
-```yaml
-name: Terraform Plan
-on:
-  pull_request:
-    paths:
-      - 'modules/**'
-      - 'environments/**'
-      - '.github/workflows/tf-*.yml'
+| Workflow              | Trigger                              | What it does                                                              |
+| --------------------- | ------------------------------------ | ------------------------------------------------------------------------- |
+| `tf-plan.yml`         | `workflow_call` / `workflow_dispatch` | Reusable plan for one `project_id`; derives env from the ID; comments PR. |
+| `tf-plan-matrix.yml`  | `pull_request`                        | Detects changed envs and fans out to `tf-plan.yml` per project.           |
+| `tf-apply.yml`        | push to deploy branch / dispatch      | Plans then applies for the selected env+stack.                            |
+| `tf-drift.yml`        | scheduled (cron) / dispatch           | `terraform plan -detailed-exitcode`; opens a GitHub Issue on drift.       |
 
-permissions:
-  contents: read
-  pull-requests: write
-  id-token: write
+Notes:
 
-env:
-  TF_VERSION: '1.9.8'
-  TF_IN_AUTOMATION: 'true'
-
-jobs:
-  detect-changes:
-    name: Detect changed environments
-    runs-on: ubuntu-latest
-    outputs:
-      envs: ${{ steps.changes.outputs.envs }}
-    steps:
-      - uses: actions/checkout@v4
-      - id: changes
-        run: |
-          # If modules/ changed, plan all envs. Otherwise only changed envs.
-          if git diff --name-only origin/main...HEAD | grep -q '^modules/'; then
-            echo 'envs=["dev","ci","qa","prod","demo"]' >> "$GITHUB_OUTPUT"
-          else
-            ENVS=$(git diff --name-only origin/main...HEAD \
-              | grep '^environments/' \
-              | cut -d'/' -f2 \
-              | sort -u \
-              | jq -R -s -c 'split("\n") | map(select(length > 0))')
-            echo "envs=${ENVS}" >> "$GITHUB_OUTPUT"
-          fi
-
-  plan:
-    name: Plan — ${{ matrix.env }}
-    needs: detect-changes
-    if: needs.detect-changes.outputs.envs != '[]'
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        env: ${{ fromJson(needs.detect-changes.outputs.envs) }}
-        include:
-          - env: dev
-            wif_provider: projects/111/locations/global/workloadIdentityPools/gh-pool/providers/gh-provider
-            wif_service_account: terraform@myapp-dev-123456.iam.gserviceaccount.com
-          - env: ci
-            wif_provider: projects/222/locations/global/workloadIdentityPools/gh-pool/providers/gh-provider
-            wif_service_account: terraform@myapp-ci-234567.iam.gserviceaccount.com
-          - env: qa
-            wif_provider: projects/333/locations/global/workloadIdentityPools/gh-pool/providers/gh-provider
-            wif_service_account: terraform@myapp-qa-345678.iam.gserviceaccount.com
-          - env: prod
-            wif_provider: projects/444/locations/global/workloadIdentityPools/gh-pool/providers/gh-provider
-            wif_service_account: terraform@myapp-prod-789012.iam.gserviceaccount.com
-          - env: demo
-            wif_provider: projects/555/locations/global/workloadIdentityPools/gh-pool/providers/gh-provider
-            wif_service_account: terraform@myapp-demo-567890.iam.gserviceaccount.com
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-
-      - id: auth
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ matrix.wif_provider }}
-          service_account: ${{ matrix.wif_service_account }}
-
-      - name: Terraform Init
-        working-directory: environments/${{ matrix.env }}
-        run: terraform init
-
-      - name: Terraform Validate
-        working-directory: environments/${{ matrix.env }}
-        run: terraform validate
-
-      - name: Terraform Plan
-        id: plan
-        working-directory: environments/${{ matrix.env }}
-        run: |
-          terraform plan \
-            -var="cloudflare_api_token=${{ secrets.CLOUDFLARE_API_TOKEN }}" \
-            -var="mailgun_api_key=${{ secrets.MAILGUN_API_KEY }}" \
-            -var="rollbar_api_key=${{ secrets.ROLLBAR_API_KEY }}" \
-            -no-color \
-            -out=tfplan \
-          2>&1 | tee plan-output.txt
-
-      - name: Comment PR
-        uses: actions/github-script@v7
-        if: always()
-        with:
-          script: |
-            const fs = require('fs');
-            const plan = fs.readFileSync(
-              'environments/${{ matrix.env }}/plan-output.txt', 'utf8'
-            );
-            const truncated = plan.length > 60000
-              ? plan.substring(0, 60000) + '\n\n... truncated ...'
-              : plan;
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `### 📋 Plan: \`${{ matrix.env }}\`\n<details><summary>Show</summary>\n\n\`\`\`\n${truncated}\n\`\`\`\n</details>`
-            });
-```
-
-### .github/workflows/tf-apply.yml
-
-```yaml
-name: Terraform Apply
-on:
-  push:
-    branches: [main]
-    paths:
-      - 'modules/**'
-      - 'environments/**'
-
-  workflow_dispatch:
-    inputs:
-      environment:
-        description: 'Environment to apply'
-        required: true
-        type: choice
-        options: [dev, ci, qa, prod, demo]
-
-permissions:
-  contents: read
-  id-token: write
-
-concurrency:
-  group: terraform-apply
-  cancel-in-progress: false
-
-env:
-  TF_VERSION: '1.9.8'
-  TF_IN_AUTOMATION: 'true'
-
-jobs:
-  apply:
-    name: Apply — ${{ matrix.env }}
-    runs-on: ubuntu-latest
-    environment: ${{ matrix.env }} # GitHub Environment with protection rules
-    strategy:
-      max-parallel: 1 # Sequential: dev → ci → qa → prod → demo
-      fail-fast: true
-      matrix:
-        env: [dev, ci, qa, prod, demo]
-        include:
-          - env: dev
-            wif_provider: projects/111/locations/global/workloadIdentityPools/gh-pool/providers/gh-provider
-            wif_service_account: terraform@myapp-dev-123456.iam.gserviceaccount.com
-          - env: ci
-            wif_provider: projects/222/locations/global/workloadIdentityPools/gh-pool/providers/gh-provider
-            wif_service_account: terraform@myapp-ci-234567.iam.gserviceaccount.com
-          - env: qa
-            wif_provider: projects/333/locations/global/workloadIdentityPools/gh-pool/providers/gh-provider
-            wif_service_account: terraform@myapp-qa-345678.iam.gserviceaccount.com
-          - env: prod
-            wif_provider: projects/444/locations/global/workloadIdentityPools/gh-pool/providers/gh-provider
-            wif_service_account: terraform@myapp-prod-789012.iam.gserviceaccount.com
-          - env: demo
-            wif_provider: projects/555/locations/global/workloadIdentityPools/gh-pool/providers/gh-provider
-            wif_service_account: terraform@myapp-demo-567890.iam.gserviceaccount.com
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-
-      - id: auth
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ matrix.wif_provider }}
-          service_account: ${{ matrix.wif_service_account }}
-
-      - name: Terraform Init
-        working-directory: environments/${{ matrix.env }}
-        run: terraform init
-
-      - name: Terraform Apply
-        working-directory: environments/${{ matrix.env }}
-        run: |
-          terraform apply \
-            -var="cloudflare_api_token=${{ secrets.CLOUDFLARE_API_TOKEN }}" \
-            -var="mailgun_api_key=${{ secrets.MAILGUN_API_KEY }}" \
-            -var="rollbar_api_key=${{ secrets.ROLLBAR_API_KEY }}" \
-            -auto-approve
-```
-
-### .github/workflows/tf-drift.yml
-
-```yaml
-name: Drift Detection
-on:
-  schedule:
-    - cron: '0 8 * * 1-5'
-
-permissions:
-  contents: read
-  id-token: write
-  issues: write
-
-env:
-  TF_VERSION: '1.9.8'
-
-jobs:
-  drift:
-    name: Drift — ${{ matrix.env }}
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        env: [dev, qa, prod]
-        include:
-          - env: dev
-            wif_provider: projects/111/locations/global/workloadIdentityPools/gh-pool/providers/gh-provider
-            wif_service_account: terraform@myapp-dev-123456.iam.gserviceaccount.com
-          - env: qa
-            wif_provider: projects/333/locations/global/workloadIdentityPools/gh-pool/providers/gh-provider
-            wif_service_account: terraform@myapp-qa-345678.iam.gserviceaccount.com
-          - env: prod
-            wif_provider: projects/444/locations/global/workloadIdentityPools/gh-pool/providers/gh-provider
-            wif_service_account: terraform@myapp-prod-789012.iam.gserviceaccount.com
-
-    steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-
-      - id: auth
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ matrix.wif_provider }}
-          service_account: ${{ matrix.wif_service_account }}
-
-      - name: Init
-        working-directory: environments/${{ matrix.env }}
-        run: terraform init
-
-      - name: Detect Drift
-        id: drift
-        working-directory: environments/${{ matrix.env }}
-        run: |
-          set +e
-          terraform plan \
-            -var="cloudflare_api_token=${{ secrets.CLOUDFLARE_API_TOKEN }}" \
-            -var="mailgun_api_key=${{ secrets.MAILGUN_API_KEY }}" \
-            -var="rollbar_api_key=${{ secrets.ROLLBAR_API_KEY }}" \
-            -detailed-exitcode \
-            -no-color 2>&1 | tee drift.txt
-          echo "exitcode=$?" >> "$GITHUB_OUTPUT"
-
-      - name: Open Issue on Drift
-        if: steps.drift.outputs.exitcode == '2'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: `⚠️ Drift detected: ${{ matrix.env }}`,
-              body: `Drift in **${{ matrix.env }}** on ${new Date().toISOString().split('T')[0]}.\n\n\`\`\`\ncd environments/${{ matrix.env }}\nterraform plan\n\`\`\``,
-              labels: ['drift', 'terraform']
-            });
-```
+- Auth uses `google-github-actions/auth@v2` with `credentials_json` from
+  `secrets.GCP_SA_KEY` (use `GCP_COMPUTE_SA_KEY` for compute services).
+- The environment name is derived from the project ID `PLATFORM-<env>-100`.
+- Working directory is `hcl/environments/<env>/<stack>/` (e.g. `.../dev/main`).
+- The matrix workflow ships with a `prototype_phase` that limits envs to
+  `dev`/`ci`; switch to `smart_detect` when out of the prototype phase.
+- Provider secret `-var` flags (Cloudflare/Mailgun/Rollbar) are present but
+  commented out in the shipped files — uncomment when those providers are wired.
 
 ---
 
@@ -1063,12 +603,12 @@ jobs:
 
 ```hcl
 variables {
-  environment    = "test"
-  project_prefix = "myapp"
-  project_id     = "myapp-test-000000"
+  environment    = "ci"
+  project_prefix = "PLATFORM"
+  project_id     = "PLATFORM-ci-100"
   gcp_region     = "us-central1"
   gcp_zone       = "us-central1-a"
-  apex_domain    = "test.example.com"
+  apex_domain    = "ci.example.com"
 
   cloudflare_api_token = "test-token"
   cloudflare_zone_id   = "test-zone"
@@ -1081,7 +621,7 @@ run "vpc_name_follows_convention" {
   command = plan
 
   assert {
-    condition     = module.networking.vpc_name == "myapp-test-vpc"
+    condition     = module.networking.vpc_name == "PLATFORM-ci-vpc"
     error_message = "VPC name should follow <prefix>-<env>-vpc convention"
   }
 }
@@ -1120,12 +660,10 @@ run "vpc_name_follows_convention" {
 }
 ```
 
-### Autocomplete for `var.` inside strings
-
 The HashiCorp extension supports autocomplete inside `"${var.` — the dot after
-`var` triggers it. Requirements: run `terraform init` first so the language
-server has context, and no syntax errors above the cursor. Bare `var.` inside a
-string without `${}` is literal text and won't trigger autocomplete.
+`var` triggers it. Run `terraform init` first so the language server has context,
+and ensure no syntax errors above the cursor. Bare `var.` inside a string without
+`${}` is literal text and won't trigger autocomplete.
 
 ---
 
@@ -1149,8 +687,8 @@ string without `${}` is literal text and won't trigger autocomplete.
 .terraform/
 ```
 
-Prettier and ESLint do not understand HCL. Do not try to make them parse `.tf`
-files. Use `terraform fmt` for formatting and `tflint` for linting.
+Prettier and ESLint do not understand HCL. Use `terraform fmt` for formatting and
+`tflint` for linting.
 
 ---
 
@@ -1184,6 +722,8 @@ repos:
 ## Other Supporting Files
 
 ### .terraform-version
+
+Ships with this skill. Install to `<project-root>/.terraform-version`:
 
 ```
 1.9.8
@@ -1242,42 +782,42 @@ override.tf.json
 ```bash
 #!/usr/bin/env bash
 # Usage: ./scripts/tf-init.sh <env> [stack]
-# Example: ./scripts/tf-init.sh dev platform/core
+# Example: ./scripts/tf-init.sh dev main
 set -euo pipefail
 
 ENV="${1:?Usage: tf-init.sh <env> [stack]}"
-STACK="${2:-platform/core}"
-ENV_DIR="environments/${ENV}"
+STACK="${2:-main}"
+STACK_DIR="hcl/environments/${ENV}/${STACK}"
 
-if [[ ! -d "$ENV_DIR" ]]; then
-  echo "Error: ${ENV_DIR} does not exist" >&2
+if [[ ! -d "$STACK_DIR" ]]; then
+  echo "Error: ${STACK_DIR} does not exist" >&2
   exit 1
 fi
 
-cd "$ENV_DIR"
+cd "$STACK_DIR"
 terraform init
 echo ""
-echo "✅ Initialized: ${ENV_DIR} (stack: ${STACK})"
+echo "Initialized: ${STACK_DIR} (env: ${ENV}, stack: ${STACK})"
 ```
 
 ---
 
 ## Quick-Reference: What Goes Where
 
-| Question                                    | Answer                                                          |
-| ------------------------------------------- | --------------------------------------------------------------- |
-| Where do I add a new GCP service?           | New module in `modules/`, wire it in the target env's `main.tf` |
-| Where do I change a value per env?          | `environments/<env>/terraform.tfvars`                           |
-| Where do I add a shared variable?           | Each env's `variables.tf` (yes, duplicated — intentional)       |
-| Where do I add derived/computed values?     | Each env's `locals.tf`                                          |
-| Where do I add a new provider?              | Each env's `versions.tf` + `providers.tf`                       |
-| Where do I rename a resource safely?        | `moved` block in the relevant module's `main.tf`                |
-| Where do I import existing infra?           | `import` block in the relevant module or env's `main.tf`        |
-| Where do I stop managing a resource?        | `removed` block with `lifecycle { destroy = false }`            |
-| How do I promote a module to prod?          | Copy the module block from a lower env's `main.tf` to prod's    |
-| How do I emulate CDKTF stacks?              | Different `prefix` values in `backend.tf` per stack             |
-| Where do secrets come from in CI?           | GitHub Actions secrets → `-var` flags                           |
-| Can I interpolate the backend bucket?       | No — backend resolves before HCL evaluation                     |
-| How does Claude/Codex understand this repo? | `AGENTS.md` (universal) + `CLAUDE.md` (Claude-specific)         |
-| What formats .tf files?                     | `terraform fmt` — NOT Prettier                                  |
-| What lints .tf files?                       | `tflint` — NOT ESLint                                           |
+| Question                                | Answer                                                                  |
+| --------------------------------------- | ----------------------------------------------------------------------- |
+| Where do I add a new GCP service?       | New module in `hcl/modules/`, wire it into the target stack's `main.tf` |
+| Where do I change a value per env?      | `hcl/environments/<env>/<stack>/terraform.tfvars`                       |
+| Where do I add a shared variable?       | Each stack's `variables.tf` (yes, duplicated — intentional)             |
+| Where do I add derived/computed values? | Each stack's `locals.tf`                                                |
+| Where do I add a new provider?          | Each stack's `versions.tf` + `providers.tf`                             |
+| Where do I rename a resource safely?    | `moved` block in the relevant module's `main.tf`                        |
+| Where do I import existing infra?       | `import` block in the relevant module or stack's `main.tf`              |
+| Where do I stop managing a resource?    | `removed` block with `lifecycle { destroy = false }`                    |
+| How do I promote a module to prod?      | Copy the module block from a lower env's stack `main.tf` to prod's      |
+| What is a stack?                        | A root-module subdir `environments/<env>/<stack>/`; prefix = stack name |
+| Where do secrets come from in CI?       | GitHub Actions secrets → `GCP_SA_KEY` / `-var` flags                    |
+| Can I interpolate the backend bucket?   | No — backend resolves before HCL evaluation                             |
+| What formats .tf files?                 | `terraform fmt` — NOT Prettier                                          |
+| What lints .tf files?                   | `tflint` — NOT ESLint                                                   |
+```

@@ -1,0 +1,5 @@
+**/*.bicep
+*.tf
+*.tfvars
+*.tfbackend
+.terraform/

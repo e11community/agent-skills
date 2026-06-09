@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ matrix.env }}
     env:
-      project_id: talorai-${{ matrix.env }}-100
+      project_id: PLATFORM-${{ matrix.env }}-100
     strategy:
       matrix:
         env:
