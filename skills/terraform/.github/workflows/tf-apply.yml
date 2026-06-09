@@ -1,0 +1,105 @@
+name: Terraform Apply
+run-name: TF Apply, ${{ github.event_name == 'push' && 'PLATFORM-ci-100' || inputs.project_id }}
+
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - "hcl/modules/**"
+      - "hcl/environments/**"
+
+  workflow_dispatch:
+    inputs:
+      project_id:
+        description: "The GCP project ID"
+        default: PLATFORM-ci-100
+        type: choice
+        options:
+          - PLATFORM-dev-100
+          - PLATFORM-ci-100
+          - PLATFORM-qa-100
+          - PLATFORM-demo-100
+          - PLATFORM-prod-100
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform-apply
+  cancel-in-progress: false
+
+env:
+  TF_VERSION: "1.9.8"
+  TF_IN_AUTOMATION: "true"
+
+jobs:
+  calculations:
+    name: Calculations
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.bash_calculations.outputs.environment }}
+      project_id: ${{ steps.bash_calculations.outputs.project_id }}
+    steps:
+      - id: bash_calculations
+        name: Bash Calculations
+        run: |
+          PROJECT_ID="${{ github.event_name == 'push' && 'PLATFORM-ci-100' || inputs.project_id }}"
+          ENVIRONMENT="$(echo "${PROJECT_ID}" | grep -Po '\w+-\K(\w+)')"
+          echo "environment=${ENVIRONMENT}" | tee -a "$GITHUB_OUTPUT"
+          echo "project_id=${PROJECT_ID}" | tee -a "$GITHUB_OUTPUT"
+
+  apply:
+    name: Apply — ${{ needs.calculations.outputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ needs.calculations.outputs.environment }}
+    needs:
+      - calculations
+    steps:
+      - id: checkout
+        name: Checkout
+        uses: actions/checkout@v4
+
+      - id: terraform_setup
+        name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - id: auth
+        name: GCP Auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ needs.calculations.outputs.project_id }}
+
+      - id: terraform_init
+        name: Terraform Init
+        working-directory: hcl/environments/${{ needs.calculations.outputs.environment }}/main
+        run: terraform init
+
+      - id: terraform_apply
+        name: Terraform Apply
+        working-directory: hcl/environments/${{ needs.calculations.outputs.environment }}/main
+        run: |
+          terraform plan -out ${{ needs.calculations.outputs.project_id }}.tfplan
+          terraform apply -auto-approve ${{ needs.calculations.outputs.project_id }}.tfplan
+            # -var="cloudflare_api_token=$--{{ secrets.CLOUDFLARE_API_TOKEN }}" \
+            # -var="mailgun_api_key=$--{{ secrets.MAILGUN_API_KEY }}" \
+            # -var="rollbar_api_key=$--{{ secrets.ROLLBAR_API_KEY }}" \
+
+      - id: terraform_output
+        name: Terraform Output
+        working-directory: hcl/environments/${{ needs.calculations.outputs.environment }}/main
+        run: |
+          terraform output -json | tee -a ${{ needs.calculations.outputs.project_id }}.output.json
+
+      - id: upload_artifacts
+        name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform
+          path: |
+            hcl/environments/${{ needs.calculations.outputs.environment }}/main/${{ needs.calculations.outputs.project_id }}.tfplan
+            hcl/environments/${{ needs.calculations.outputs.environment }}/main/${{ needs.calculations.outputs.project_id }}.output.json
+          if-no-files-found: warn

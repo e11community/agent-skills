@@ -1,0 +1,117 @@
+name: Terraform Plan
+run-name: TF Plan, ${{ inputs.project_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      project_id:
+        default: PLATFORM-ci-100
+        type: choice
+        options:
+          - PLATFORM-dev-100
+          - PLATFORM-ci-100
+          - PLATFORM-qa-100
+          - PLATFORM-demo-100
+          - PLATFORM-prod-100
+  workflow_call:
+    inputs:
+      project_id:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  TF_VERSION: "1.9.8"
+  TF_IN_AUTOMATION: "true"
+
+jobs:
+  calculations:
+    name: Calculations
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.bash_calculations.outputs.environment }}
+      project_id: ${{ steps.bash_calculations.outputs.project_id }}
+    steps:
+      - id: bash_calculations
+        name: Bash Calculations
+        run: |
+          ENVIRONMENT="$(echo "${{ inputs.project_id }}" | grep -Po '\w+-\K(\w+)')"
+          echo "environment=${ENVIRONMENT}" | tee -a "$GITHUB_OUTPUT"
+
+  plan:
+    name: Plan, ${{ needs.calculations.outputs.environment }}
+    runs-on: ubuntu-latest
+    needs:
+      - calculations
+    environment: ${{ needs.calculations.outputs.environment }}
+    steps:
+      - id: checkout
+        name: Checkout
+        uses: actions/checkout@v4
+
+      - id: terraform_setup
+        name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - id: auth
+        name: GCP Auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ inputs.project_id }}
+
+      - id: terraform_init
+        name: Terraform Init
+        working-directory: hcl/environments/${{ needs.calculations.outputs.environment }}/main
+        run: terraform init
+
+      - id: terraform_validate
+        name: Terraform Validate
+        working-directory: hcl/environments/${{ needs.calculations.outputs.environment }}/main
+        run: terraform validate
+
+      - id: terraform_plan
+        name: Terraform Plan
+        working-directory: hcl/environments/${{ needs.calculations.outputs.environment }}/main
+        run: |
+          terraform plan \
+            -out=${{ inputs.project_id }}.tfplan \
+            -no-color \
+            2>&1 | tee ${{ inputs.project_id }}.output.txt
+            # -var="cloudflare_api_token=$--{{ secrets.CLOUDFLARE_API_TOKEN }}" \
+            # -var="mailgun_api_key=$--{{ secrets.MAILGUN_API_KEY }}" \
+            # -var="rollbar_api_key=$--{{ secrets.ROLLBAR_API_KEY }}" \
+
+      - id: upload_artifacts
+        name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan
+          path: |
+            hcl/environments/${{ needs.calculations.outputs.environment }}/main/${{ inputs.project_id }}.tfplan
+            hcl/environments/${{ needs.calculations.outputs.environment }}/main/${{ inputs.project_id }}.output.txt
+          if-no-files-found: warn
+
+      - id: pr_comment
+        name: Comment PR
+        if: github.event.pull_request.number
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync(
+              'hcl/environments/${{ needs.calculations.outputs.environment }}/main/${{ inputs.project_id }}.output.txt', 'utf8'
+            );
+            const truncated = plan.length > 60000
+              ? plan.substring(0, 60000) + '\n\n... truncated ...'
+              : plan;
+            github.rest.issues.createComment({
+              issue_number: ${{ github.event.pull_request.number }},
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `### Plan: \`${{ needs.calculations.outputs.environment }}\`\n<details><summary>Show</summary>\n\n\`\`\`\n${truncated}\n\`\`\`\n</details>`
+            });

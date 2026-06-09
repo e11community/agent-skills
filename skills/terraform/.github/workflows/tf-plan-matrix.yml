@@ -1,0 +1,65 @@
+name: Terraform Plan, PR
+run-name: TF Plan, PR Matrix
+on:
+  pull_request:
+    paths:
+      - "hcl/modules/**"
+      - "hcl/environments/**"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  TF_VERSION: "1.9.8"
+  TF_IN_AUTOMATION: "true"
+
+jobs:
+  detect_changes:
+    name: Detect changed environments
+    runs-on: ubuntu-latest
+    outputs:
+      envs: ${{ steps.changes.outputs.envs }}
+      projects: ${{ steps.changes.outputs.projects }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: changes
+        run: |
+          prototype_phase() {
+            echo 'envs=["dev","ci"]' | tee -a "$GITHUB_OUTPUT"
+            echo 'projects=["PLATFORM-dev-100","PLATFORM-ci-100"]' | tee -a "$GITHUB_OUTPUT"
+          }
+
+          smart_detect() {
+            # If modules/ changed, plan all envs. Otherwise only changed envs.
+            if git diff --name-only origin/main...HEAD | grep -q '^hcl/modules/'; then
+              echo 'envs=["dev","ci","qa","prod","demo"]' | tee -a "$GITHUB_OUTPUT"
+              echo 'projects=["PLATFORM-dev-100","PLATFORM-ci-100","PLATFORM-qa-100","PLATFORM-prod-100","PLATFORM-demo-100"]' | tee -a "$GITHUB_OUTPUT"
+            else
+              ENVS=$(git diff --name-only origin/main...HEAD \
+                | grep '^hcl/environments/' \
+                | cut -d'/' -f3 \
+                | sort -u \
+                | jq -R -s -c 'split("\n") | map(select(length > 0))')
+              echo "envs=${ENVS}" | tee -a "$GITHUB_OUTPUT"
+              PROJECTS=$(echo "${ENVS}" | jq -c 'map("PLATFORM-" + . + "-100")')
+              echo "projects=${PROJECTS}" | tee -a "$GITHUB_OUTPUT"
+            fi
+          }
+
+          prototype_phase # change to smart_detect when out of prototype phase
+
+  plan:
+    name: Plan — ${{ matrix.project_id }}
+    needs:
+      - detect_changes
+    uses: "./.github/workflows/tf-plan.yml"
+    secrets: inherit
+    strategy:
+      fail-fast: false
+      matrix:
+        project_id: ${{ fromJSON(needs.detect_changes.outputs.projects) }}
+    with:
+      project_id: ${{ matrix.project_id }}
