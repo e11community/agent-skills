@@ -77,14 +77,14 @@ jobs:
       - id: terraform_plan
         name: Terraform Plan
         working-directory: hcl/environments/${{ needs.calculations.outputs.environment }}/main
+        env:
+          TF_VAR_CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          # TF_VAR_MAILGUN_API_KEY: $--{{ secrets.MAILGUN_API_KEY }}
+          # TF_VAR_ROLLBAR_API_KEY: $--{{ secrets.ROLLBAR_API_KEY }}
         run: |
           terraform plan \
-            -out=${{ inputs.project_id }}.tfplan \
             -no-color \
             2>&1 | tee ${{ inputs.project_id }}.output.txt
-            # -var="cloudflare_api_token=$--{{ secrets.CLOUDFLARE_API_TOKEN }}" \
-            # -var="mailgun_api_key=$--{{ secrets.MAILGUN_API_KEY }}" \
-            # -var="rollbar_api_key=$--{{ secrets.ROLLBAR_API_KEY }}" \
 
       - id: upload_artifacts
         name: Upload Artifacts
@@ -92,7 +92,6 @@ jobs:
         with:
           name: terraform-plan
           path: |
-            hcl/environments/${{ needs.calculations.outputs.environment }}/main/${{ inputs.project_id }}.tfplan
             hcl/environments/${{ needs.calculations.outputs.environment }}/main/${{ inputs.project_id }}.output.txt
           if-no-files-found: warn
 

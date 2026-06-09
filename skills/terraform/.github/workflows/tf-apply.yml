@@ -81,12 +81,13 @@ jobs:
       - id: terraform_apply
         name: Terraform Apply
         working-directory: hcl/environments/${{ needs.calculations.outputs.environment }}/main
+        env:
+          TF_VAR_CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          # TF_VAR_MAILGUN_API_KEY: $--{{ secrets.MAILGUN_API_KEY }}
+          # TF_VAR_ROLLBAR_API_KEY: $--{{ secrets.ROLLBAR_API_KEY }}
         run: |
-          terraform plan -out ${{ needs.calculations.outputs.project_id }}.tfplan
+          terraform plan -out ${{ needs.calculations.outputs.project_id }}.tfplan && \
           terraform apply -auto-approve ${{ needs.calculations.outputs.project_id }}.tfplan
-            # -var="cloudflare_api_token=$--{{ secrets.CLOUDFLARE_API_TOKEN }}" \
-            # -var="mailgun_api_key=$--{{ secrets.MAILGUN_API_KEY }}" \
-            # -var="rollbar_api_key=$--{{ secrets.ROLLBAR_API_KEY }}" \
 
       - id: terraform_output
         name: Terraform Output
@@ -100,6 +101,5 @@ jobs:
         with:
           name: terraform
           path: |
-            hcl/environments/${{ needs.calculations.outputs.environment }}/main/${{ needs.calculations.outputs.project_id }}.tfplan
             hcl/environments/${{ needs.calculations.outputs.environment }}/main/${{ needs.calculations.outputs.project_id }}.output.json
           if-no-files-found: warn
