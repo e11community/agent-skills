@@ -12,7 +12,7 @@ env:
   TF_VERSION: '1.9.8'
 
 jobs:
-  drift:
+  drift-envstack-main:
     name: Drift — ${{ matrix.env }}
     runs-on: ubuntu-latest
     environment: ${{ matrix.env }}
@@ -72,4 +72,61 @@ jobs:
               title: `Drift detected: ${{ matrix.env }}`,
               body: `Drift in **${{ matrix.env }}** on ${new Date().toISOString().split('T')[0]}.\n\n\`\`\`\ncd hcl/environments/${{ matrix.env }}/main\nterraform plan\n\`\`\``,
               labels: ['drift', 'terraform']
+            });
+
+  drift-orgstacks:
+    name: Drift Org — ${{ matrix.org_stack }}
+    runs-on: ubuntu-latest
+    environment: prod
+    env:
+      # Org-stacks are env-agnostic and always operate against the prod project.
+      project_id: PLATFORM-prod-100
+    strategy:
+      matrix:
+        org_stack:
+          - org-iam
+    steps:
+      - id: checkout
+        name: Checkout
+        uses: actions/checkout@v4
+
+      - id: terraform_setup
+        name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - id: auth
+        name: GCP Auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ env.project_id }}
+
+      - id: terraform_init
+        name: Terraform Init
+        working-directory: hcl/org-stacks/${{ matrix.org_stack }}
+        run: terraform init
+
+      - id: drift
+        name: Detect Drift
+        working-directory: hcl/org-stacks/${{ matrix.org_stack }}
+        run: |
+          set +e
+          terraform plan \
+            -detailed-exitcode \
+            -no-color 2>&1 | tee drift.txt
+          echo "exitcode=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Open Issue on Drift
+        if: steps.drift.outputs.exitcode == '2'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Drift detected: org-stack ${{ matrix.org_stack }}`,
+              body: `Drift in org-stack **${{ matrix.org_stack }}** on ${new Date().toISOString().split('T')[0]}.\n\n\`\`\`\ncd hcl/org-stacks/${{ matrix.org_stack }}\nterraform plan\n\`\`\``,
+              labels: ['drift', 'terraform', 'org']
             });
