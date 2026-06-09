@@ -12,7 +12,16 @@ infrastructure across five environments — **dev, ci, qa, demo, prod** (these
 five always exist, regardless of platform). Each environment owns one or more
 **stacks**; each stack is a separate root module under
 `hcl/environments/<env>/<stack>/`. Its `main.tf` explicitly declares which child
-modules it uses. Shared child modules live in `hcl/modules/`.
+modules it uses. Shared per-project child modules live in `hcl/modules/`.
+
+A repo may also manage **GCP Organization-wide** resources (folders, org IAM,
+org policies, org log sinks, billing IAM). Organization resources are singletons
+— there is one organization, not one per environment — so this layer is
+environment-agnostic and NOT parameterized by dev/ci/qa/demo/prod. It has two
+parts: child modules in `hcl/org-modules/<module>/` and the root modules that
+wire them in `hcl/org-stacks/<stack>/`. All org-stacks store their state in the
+**prod** project's bucket under prefix `org-stacks/<stack>`. See
+"Organization-Wide Modules" and "Organization-Level Stacks" below.
 
 **Core principle:** module presence is expressed structurally — a module block
 is either present in a stack's `main.tf` or it isn't. Never gate modules with
@@ -42,6 +51,9 @@ assume they always exist.
 ## When to Use
 
 - Adding, removing, or editing child modules in `hcl/modules/`
+- Adding, removing, or editing GCP Organization-wide child modules in
+  `hcl/org-modules/` (folders, org IAM, org policies, org log sinks)
+- Wiring org-modules into an org-stack (`hcl/org-stacks/<stack>/main.tf`)
 - Wiring modules into a stack (`hcl/environments/<env>/<stack>/main.tf`)
 - Promoting a module from a lower environment to a higher one
 - Editing providers, backends, variables, locals, or tfvars
@@ -91,9 +103,17 @@ Backend `prefix` = stack name.
 
 ## Directory Conventions
 
-- `hcl/modules/<name>/` — one child module per infrastructure concern
+- `hcl/modules/<name>/` — one per-project child module per infrastructure concern
+- `hcl/org-modules/<name>/` — one child module per GCP Organization-wide concern
+  (folders, org IAM, org policies, org log sinks). Same file convention as
+  `hcl/modules/`. See "Organization-Wide Modules".
 - Each module has exactly: `main.tf`, `variables.tf`, `outputs.tf`, `versions.tf`
   (plus `iam.tf` when the module manages IAM resources)
+- `hcl/org-stacks/<stack>/` — one root module per GCP Organization-level stack.
+  Same root-module file set as an environment stack (below). State lives in the
+  prod bucket; prefix = `org-stacks/<stack>`. See "Organization-Level Stacks".
+- Source path from an org-stack root to an org-module: `source =
+  "../../org-modules/<name>"` (two levels up: `<stack>` → `org-stacks` → `hcl`)
 - `hcl/environments/<env>/<stack>/` — one root module per env+stack
 - Each stack root has: `main.tf`, `providers.tf`, `variables.tf`, `outputs.tf`,
   `versions.tf`, `backend.tf`, `locals.tf`, `data.tf`, `terraform.tfvars`
@@ -251,6 +271,99 @@ When creating a new child module, follow this sequence exactly:
    terraform validate
    ```
 
+## Organization-Wide Modules (`hcl/org-modules/`)
+
+GCP Organization-level resources (folders, org IAM, org policies, org log sinks,
+billing IAM) are managed by child modules under `hcl/org-modules/<name>/`. They
+follow the same conventions as `hcl/modules/` modules, with these differences:
+
+- **Singletons, not per-environment.** There is one GCP Organization, so an
+  org-module is NOT parameterized by `environment` and is never promoted across
+  dev/ci/qa/demo/prod. Do not add an `environment` variable or env-specific
+  branching to an org-module.
+- **Scope by `org_id`, not `project_id`.** Org-level resources are anchored to
+  the organization (and sometimes a `folder_id` or `billing_account`). Accept
+  `org_id` (and `folder_id` / `billing_account` where relevant) as variables;
+  never hardcode them. Most org-modules take no `project_id` at all.
+- **Self-contained child modules.** Like any module, an org-module defines no
+  provider or backend config of its own — it declares `required_providers` in
+  `versions.tf` and is wired into an org-stack (`hcl/org-stacks/<stack>/`), which
+  supplies provider config and state. File set: `main.tf`, `variables.tf`,
+  `outputs.tf`, `versions.tf`, plus `iam.tf` when it manages IAM.
+- **Most org resources do not support `labels`.** Folders, org IAM bindings, and
+  org policies have no `labels` argument, so an org-module usually omits the
+  `labels` variable. Add it only for resources that actually accept labels
+  (verify against the Registry).
+- **IAM-centric modules still use `iam.tf`.** An org-module whose purpose is IAM
+  (e.g. an `org-iam` module) puts its `google_organization_iam_*` /
+  `google_billing_account_iam_*` / `google_folder_iam_*` resources in `iam.tf`;
+  `main.tf` may then hold only data sources/locals or be minimal.
+
+Common org-level resource types (verify each against the Terraform Registry
+before use — do not guess argument names):
+
+- `google_folder`, `google_folder_iam_*`
+- `google_organization_iam_member` / `_binding` / `_policy` / `_audit_config`
+- `google_organization_iam_custom_role`
+- `google_org_policy_policy` (Org Policy v2)
+- `google_logging_organization_sink`, `google_logging_organization_bucket_config`
+- `google_billing_account_iam_member` / `_binding`
+- `google_essential_contacts_contact` (parented to the org)
+- `google_tags_tag_key` / `google_tags_tag_value` (org-scoped)
+
+**Validation:** like any child module, never run `terraform validate` inside an
+`hcl/org-modules/` directory — modules have no provider or backend config.
+Validate from the org-stack root that wires the module:
+
+```bash
+cd hcl/org-stacks/<stack>
+terraform init -upgrade
+terraform validate
+```
+
+See `terraform-repo-layout.md` for example org-modules and org-stacks.
+
+## Organization-Level Stacks (`hcl/org-stacks/`)
+
+An **org-stack** is a root module under `hcl/org-stacks/<stack>/` that wires
+org-modules, exactly as an environment stack wires per-project modules. It has
+the same root-module file set: `main.tf`, `providers.tf`, `variables.tf`,
+`outputs.tf`, `versions.tf`, `backend.tf`, `locals.tf`, `data.tf`,
+`terraform.tfvars`. Differences from environment stacks:
+
+- **State always lives in the prod bucket.** The prod project ID is fixed for
+  ALL org-stacks — the organization is not owned by any one environment, and
+  prod is the designated home. Every org-stack's `backend.tf` is:
+
+  ```hcl
+  # Remember, no var or interpolation
+  terraform {
+    backend "gcs" {
+      bucket = "PLATFORM-prod-100-remote-state"
+      prefix = "org-stacks/<stack>"
+    }
+  }
+  ```
+
+  Replace `PLATFORM` with the platform name and `<stack>` with the stack name.
+- **Prefix is `org-stacks/<stack>`, not just the stack name.** This is a
+  deliberate deviation from the environment-stack rule (where prefix = stack
+  name). The `org-stacks/` segment namespaces all org state within the shared
+  prod bucket so it never collides with prod's environment stacks.
+- **No `environment` variable.** Org-stacks are environment-agnostic. Scope by
+  `org_id` (and `billing_account` / `folder_id` where needed). The provider's
+  quota/billing `project` is the prod project ID (fixed), accepted as
+  `project_id`.
+- **Module source path is two levels up:** `source = "../../org-modules/<name>"`
+  (`<stack>` → `org-stacks` → `hcl`), versus three levels for environment stacks.
+- **The executing identity needs org-level roles.** Whatever service account
+  runs the org-stack plan/apply must hold the relevant organization-level roles
+  (e.g. `roles/resourcemanager.organizationAdmin`,
+  `roles/orgpolicy.policyAdmin`), not just prod-project roles.
+
+Add a new org-stack by creating `hcl/org-stacks/<stack>/` with the standard
+root-module files and the `backend.tf` above.
+
 ## Promoting Modules Across Environments
 
 1. Build the module in `hcl/modules/<name>/` with full variable/output contracts.
@@ -262,7 +375,11 @@ When creating a new child module, follow this sequence exactly:
 ## State & Backend
 
 - One GCS bucket per GCP project (`<project-id>-remote-state`).
-- Each stack's `backend.tf` hardcodes bucket + prefix (prefix = stack name).
+- Each environment stack's `backend.tf` hardcodes bucket + prefix (prefix =
+  stack name).
+- Org-stacks are the exception: they ALL use the prod bucket
+  (`PLATFORM-prod-100-remote-state`) with prefix `org-stacks/<stack>`. See
+  "Organization-Level Stacks".
 - Backend blocks CANNOT use variables or interpolation of any kind — the backend
   is resolved during `init`, before any HCL evaluation.
 - Never run `terraform state` commands manually. Prefer in-HCL blocks:
@@ -306,6 +423,11 @@ Auth uses `google-github-actions/auth@v2` with `credentials_json` from
 `secrets.GCP_SA_KEY`. The environment name is derived from the project ID
 (`PLATFORM-<env>-100`).
 
+For org-stacks the working directory is `hcl/org-stacks/<stack>/` and the
+project is always the prod project (`PLATFORM-prod-100`). The credentials used
+must belong to an identity that holds organization-level roles, not just
+prod-project roles.
+
 ## Things to Watch Out For
 
 - Firebase resources require the `google-beta` provider, not `google`.
@@ -334,9 +456,11 @@ copy them to the project root:
   `tf-drift.yml` → `<project-root>/.github/workflows/`
 - `.terraform-version` → `<project-root>/.terraform-version`
 
-Then create the remaining structure and template files (modules, environments,
-tests, scripts, `.tflint.hcl`, `.editorconfig`, `.gitignore`,
-`.pre-commit-config.yaml`, etc.) from `terraform-repo-layout.md`.
+Then create the remaining structure and template files (modules, org-modules,
+environments, org-stacks, tests, scripts, `.tflint.hcl`, `.editorconfig`,
+`.gitignore`, `.pre-commit-config.yaml`, etc.) from `terraform-repo-layout.md`.
+Create `hcl/org-modules/` and `hcl/org-stacks/` only if the repo manages GCP
+Organization-wide resources.
 
 After copying, **realize the placeholders**:
 

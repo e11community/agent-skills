@@ -7,9 +7,10 @@
 >
 > **Placeholders:** `PLATFORM` is the platform/project short name — replace it
 > with the real name in a realized repo. Module names (`networking`, `cloud-run`,
-> …) and stack names (`main`) are examples — use the repo's actual names. The
-> five environment names are fixed and always exist. See `SKILL.md` for
-> conventions; this file is the structural reference.
+> …), org-module names (`folders`, `org-iam`, …), and stack names (`main`) are
+> examples — use the repo's actual names. The five environment names are fixed
+> and always exist. See `SKILL.md` for conventions; this file is the structural
+> reference.
 
 ---
 
@@ -41,7 +42,7 @@ PLATFORM-infrastructure/
     ├── CLAUDE.md                       # Thin pointer to the terraform skill + project context
     ├── README.md
     │
-    ├── modules/                        # Shared child modules (names are examples)
+    ├── modules/                        # Shared per-project child modules (names are examples)
     │   ├── networking/                 # VPC, subnets, firewall, Cloud NAT
     │   │   ├── main.tf
     │   │   ├── variables.tf
@@ -59,6 +60,35 @@ PLATFORM-infrastructure/
     │       ├── outputs.tf
     │       ├── versions.tf
     │       └── iam.tf                   # Only when the module manages IAM
+    │
+    ├── org-modules/                     # GCP Organization-wide child modules (singletons; names are examples)
+    │   ├── folders/                     # google_folder hierarchy
+    │   │   ├── main.tf
+    │   │   ├── variables.tf
+    │   │   ├── outputs.tf
+    │   │   └── versions.tf
+    │   ├── org-iam/                     # Org-level IAM bindings + custom roles
+    │   │   ├── main.tf                  # Minimal — data sources/locals only
+    │   │   ├── variables.tf
+    │   │   ├── outputs.tf
+    │   │   ├── versions.tf
+    │   │   └── iam.tf                   # google_organization_iam_* lives here
+    │   ├── org-policies/                # google_org_policy_policy (Org Policy v2)
+    │   └── org-log-sinks/               # google_logging_organization_sink
+    │
+    ├── org-stacks/                      # Org-level root modules (env-agnostic; stack names are examples)
+    │   └── main/                        # `main` is the example default org stack
+    │       ├── main.tf                  # Wires org-modules (source = ../../org-modules/<name>)
+    │       ├── providers.tf
+    │       ├── variables.tf
+    │       ├── outputs.tf
+    │       ├── versions.tf
+    │       ├── backend.tf               # prod bucket; prefix = org-stacks/<stack>
+    │       ├── locals.tf
+    │       ├── data.tf
+    │       └── terraform.tfvars
+    │   # NOTE: ALL org-stacks store state in the prod bucket
+    │   # (PLATFORM-prod-100-remote-state) under prefix org-stacks/<stack>.
     │
     ├── environments/                    # One root module per env + stack
     │   ├── dev/
@@ -573,6 +603,248 @@ resource "cloudflare_record" "mailgun" {
 
 ---
 
+## Example Organization-Wide Modules
+
+Org-modules live in `hcl/org-modules/<name>/` and follow the same file
+convention as `hcl/modules/`. They are GCP Organization singletons: scoped by
+`org_id` (and sometimes `folder_id` / `billing_account`), never by
+`environment` or `project_id`, and never promoted across environments. Like any
+module they define no provider or backend of their own — they are wired into an
+org-stack (see "Organization-Level Stacks"). Most org-level resources do not
+accept `labels`, so these modules usually omit the `labels` variable.
+
+### org-modules/folders/main.tf
+
+```hcl
+resource "google_folder" "this" {
+  for_each = var.folders
+
+  display_name = each.value.display_name
+  parent       = each.value.parent_folder_id != null ? "folders/${each.value.parent_folder_id}" : "organizations/${var.org_id}"
+}
+```
+
+### org-modules/folders/variables.tf
+
+```hcl
+variable "folders" {
+  description = "Map of folders to create, keyed by a stable logical name"
+  type = map(object({
+    display_name     = string
+    parent_folder_id = optional(string)
+  }))
+}
+
+variable "org_id" {
+  description = "GCP Organization ID (numeric, no 'organizations/' prefix)"
+  type        = string
+}
+```
+
+### org-modules/org-iam/iam.tf
+
+```hcl
+# Org-level IAM resources live in iam.tf, not main.tf — see SKILL.md.
+resource "google_organization_iam_member" "this" {
+  for_each = var.org_iam_members
+
+  org_id = var.org_id
+  role   = each.value.role
+  member = each.value.member
+}
+
+resource "google_organization_iam_custom_role" "this" {
+  for_each = var.custom_roles
+
+  org_id      = var.org_id
+  role_id     = each.key
+  title       = each.value.title
+  description = each.value.description
+  permissions = each.value.permissions
+}
+```
+
+### org-modules/org-policies/main.tf
+
+```hcl
+# Org Policy v2. Boolean constraints, e.g. compute.disableSerialPortAccess.
+resource "google_org_policy_policy" "boolean" {
+  for_each = var.boolean_constraints
+
+  name   = "organizations/${var.org_id}/policies/${each.key}"
+  parent = "organizations/${var.org_id}"
+
+  spec {
+    rules {
+      enforce = each.value ? "TRUE" : "FALSE"
+    }
+  }
+}
+```
+
+### org-modules/org-log-sinks/main.tf
+
+```hcl
+resource "google_logging_organization_sink" "this" {
+  name             = var.sink_name
+  org_id           = var.org_id
+  destination      = var.destination
+  filter           = var.filter
+  include_children = true
+}
+```
+
+### org-modules/\<name\>/versions.tf
+
+```hcl
+terraform {
+  required_version = "~> 1.9"
+
+  required_providers {
+    google = {
+      source  = "hashicorp/google"
+      version = "~> 6.14"
+    }
+  }
+}
+```
+
+---
+
+## Organization-Level Stacks
+
+Org-stacks live in `hcl/org-stacks/<stack>/` and are root modules — the same
+file set as an environment stack — that wire org-modules. They are
+environment-agnostic. State for ALL org-stacks lives in the prod bucket under
+prefix `org-stacks/<stack>`; the prod project ID is fixed for every org-stack.
+Module source paths go up two levels: `../../org-modules/<name>` (`<stack>` →
+`org-stacks` → `hcl`).
+
+### org-stacks/\<stack\>/backend.tf
+
+```hcl
+# Remember, no var or interpolation
+terraform {
+  backend "gcs" {
+    bucket = "PLATFORM-prod-100-remote-state"
+    prefix = "org-stacks/main"
+  }
+}
+```
+
+> The bucket is ALWAYS the prod project's state bucket — org state is not owned
+> by any single environment, and prod is its designated home. The `prefix`
+> carries the `org-stacks/` segment (not just the stack name) so org state never
+> collides with prod's environment stacks in the shared bucket.
+
+### org-stacks/\<stack\>/versions.tf
+
+```hcl
+terraform {
+  required_version = "~> 1.9"
+
+  required_providers {
+    google = {
+      source  = "hashicorp/google"
+      version = "~> 6.14"
+    }
+    google-beta = {
+      source  = "hashicorp/google-beta"
+      version = "~> 6.14"
+    }
+  }
+}
+```
+
+### org-stacks/\<stack\>/providers.tf
+
+```hcl
+# The provider's quota/billing project is the prod project (fixed for org work).
+provider "google" {
+  project = var.project_id
+  region  = var.gcp_region
+}
+
+provider "google-beta" {
+  project               = var.project_id
+  region                = var.gcp_region
+  user_project_override = true
+}
+```
+
+### org-stacks/\<stack\>/variables.tf
+
+```hcl
+# ── GCP Organization ──────────────────────────────────────────────────────────
+variable "org_id" {
+  description = "GCP Organization ID (numeric, no 'organizations/' prefix)"
+  type        = string
+}
+
+variable "billing_account" {
+  description = "Billing account ID for org-level billing IAM"
+  type        = string
+}
+
+# ── GCP ─────────────────────────────────────────────────────────────────────
+variable "project_id" {
+  description = "Quota/billing project for org-level API calls — the prod project"
+  type        = string
+}
+
+variable "project_prefix" {
+  description = "Short prefix for resource naming and labels (e.g. 'PLATFORM')"
+  type        = string
+}
+
+variable "gcp_region" {
+  description = "Default GCP region"
+  type        = string
+  default     = "us-central1"
+}
+```
+
+### org-stacks/\<stack\>/main.tf
+
+```hcl
+# ── Folders ───────────────────────────────────────────────────────────────────
+module "folders" {
+  source = "../../org-modules/folders"
+
+  org_id  = var.org_id
+  folders = var.folders
+}
+
+# ── Org IAM ───────────────────────────────────────────────────────────────────
+module "org_iam" {
+  source = "../../org-modules/org-iam"
+
+  org_id          = var.org_id
+  org_iam_members = var.org_iam_members
+  custom_roles    = var.custom_roles
+}
+
+# ── Org Policies ──────────────────────────────────────────────────────────────
+module "org_policies" {
+  source = "../../org-modules/org-policies"
+
+  org_id              = var.org_id
+  boolean_constraints = var.boolean_constraints
+}
+```
+
+### org-stacks/\<stack\>/terraform.tfvars
+
+```hcl
+org_id          = "123456789012"
+billing_account = "ABCDEF-012345-6789AB"
+project_id      = "PLATFORM-prod-100"
+project_prefix  = "PLATFORM"
+gcp_region      = "us-central1"
+```
+
+---
+
 ## GitHub Actions
 
 The full workflow YAML ships with this skill in `.github/workflows/` — install
@@ -807,6 +1079,9 @@ echo "Initialized: ${STACK_DIR} (env: ${ENV}, stack: ${STACK})"
 | Question                                | Answer                                                                  |
 | --------------------------------------- | ----------------------------------------------------------------------- |
 | Where do I add a new GCP service?       | New module in `hcl/modules/`, wire it into the target stack's `main.tf` |
+| Where do I manage org-wide resources?   | New module in `hcl/org-modules/` (folders, org IAM, org policies, sinks) |
+| Where do I wire org-modules?            | An org-stack root: `hcl/org-stacks/<stack>/main.tf`                      |
+| Where does org-stack state live?        | Prod bucket `PLATFORM-prod-100-remote-state`, prefix `org-stacks/<stack>` |
 | Where do I change a value per env?      | `hcl/environments/<env>/<stack>/terraform.tfvars`                       |
 | Where do I add a shared variable?       | Each stack's `variables.tf` (yes, duplicated — intentional)             |
 | Where do I add derived/computed values? | Each stack's `locals.tf`                                                |
