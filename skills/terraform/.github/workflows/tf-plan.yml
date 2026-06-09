@@ -84,7 +84,7 @@ jobs:
         run: |
           terraform plan \
             -no-color \
-            2>&1 | tee ${{ inputs.project_id }}.output.txt
+            2>&1 | tee ${{ inputs.project_id }}.plan-output.txt
 
       - id: upload_artifacts
         name: Upload Artifacts
@@ -92,7 +92,7 @@ jobs:
         with:
           name: terraform-plan
           path: |
-            hcl/environments/${{ needs.calculations.outputs.environment }}/main/${{ inputs.project_id }}.output.txt
+            hcl/environments/${{ needs.calculations.outputs.environment }}/main/${{ inputs.project_id }}.plan-output.txt
           if-no-files-found: warn
 
       - id: pr_comment
