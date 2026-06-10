@@ -78,7 +78,7 @@ jobs:
         name: Terraform Plan
         working-directory: hcl/environments/${{ needs.calculations.outputs.environment }}/main
         env:
-          TF_VAR_CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          TF_VAR_CLOUDFLARE_API_TOKEN: ${{ fromJson(secrets.CLOUDFLARE_ZONE_USER_API_TOKEN).token }}
           # TF_VAR_MAILGUN_API_KEY: $--{{ secrets.MAILGUN_API_KEY }}
           # TF_VAR_ROLLBAR_API_KEY: $--{{ secrets.ROLLBAR_API_KEY }}
         run: |
@@ -103,7 +103,7 @@ jobs:
           script: |
             const fs = require('fs');
             const plan = fs.readFileSync(
-              'hcl/environments/${{ needs.calculations.outputs.environment }}/main/${{ inputs.project_id }}.output.txt', 'utf8'
+              'hcl/environments/${{ needs.calculations.outputs.environment }}/main/${{ inputs.project_id }}.plan-output.txt', 'utf8'
             );
             const truncated = plan.length > 60000
               ? plan.substring(0, 60000) + '\n\n... truncated ...'
