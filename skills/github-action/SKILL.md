@@ -44,6 +44,12 @@ my-action/
   README.md
 ```
 
+Copyable versions of the static config files live in this skill's
+[`templates/`](templates/) directory — `tsconfig.json`, `.editorconfig`, and
+`.vscode/settings.json`. Short or project-specific files (`package.json`,
+`.prettierrc.js`, `.prettierignore`, `.gitattributes`, `action.yml`) stay inline
+below.
+
 ## Build: esbuild bundles, tsc only type-checks
 
 This is the core of the modern setup. Two tools, one job each:
@@ -77,27 +83,13 @@ its `--minify` yields a noticeably smaller `dist`.)
 }
 ```
 
-`tsconfig.json` — note `moduleResolution: "bundler"`:
+`tsconfig.json` is static boilerplate — copy
+[`templates/tsconfig.json`](templates/tsconfig.json) verbatim. The two fields
+that matter most for an esbuild action:
 
-```json
-{
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "esnext",
-    "moduleResolution": "bundler",
-    "strict": true,
-    "isolatedModules": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "resolveJsonModule": true,
-    "forceConsistentCasingInFileNames": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "noImplicitReturns": true,
-    "types": ["node"]
-  },
-  "include": ["src/**/*"]
-}
+```jsonc
+"moduleResolution": "bundler",  // not "nodenext"
+"isolatedModules": true,        // matches esbuild's per-file compilation
 ```
 
 **Why `moduleResolution: "bundler"` and not `"nodenext"`:** `nodenext` forces
@@ -238,47 +230,11 @@ node_modules/
 package-lock.json
 ```
 
-`.editorconfig`:
-
-```ini
-root = true
-
-[*]
-charset = utf-8
-end_of_line = lf
-insert_final_newline = true
-trim_trailing_whitespace = true
-
-[*.{js,ts,json,yml,yaml}]
-indent_style = space
-indent_size = 2
-
-[*.md]
-trim_trailing_whitespace = false
-```
-
-`.vscode/settings.json` — Prettier as the default formatter, format-on-save:
-
-```json
-{
-  "editor.formatOnSave": true,
-  "editor.defaultFormatter": "esbenp.prettier-vscode",
-  "[javascript]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode",
-    "editor.formatOnSave": true
-  },
-  "[typescript]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode",
-    "editor.formatOnSave": true
-  },
-  "[json]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode",
-    "editor.formatOnSave": true
-  },
-  "files.insertFinalNewline": true,
-  "files.trimTrailingWhitespace": true
-}
-```
+`.editorconfig` and `.vscode/settings.json` are static boilerplate — copy
+[`templates/.editorconfig`](templates/.editorconfig) and
+[`templates/.vscode/settings.json`](templates/.vscode/settings.json) verbatim.
+The VS Code settings make Prettier the default formatter with format-on-save for
+js/ts/json.
 
 ## Forking etiquette
 
