@@ -5,14 +5,18 @@ on:
   push:
     branches:
       - develop
+      - main
     paths:
-      - "hcl/modules/**"
-      - "hcl/environments/**"
+      - 'hcl/modules/**'
+      - 'hcl/environments/**'
+      - 'hcl/org-modules/**'
+      - 'hcl/org-stacks/**'
+      - 'hcl/platform/**'
 
   workflow_dispatch:
     inputs:
       project_id:
-        description: "The GCP project ID"
+        description: 'The GCP project ID'
         default: PLATFORM-ci-100
         type: choice
         options:
@@ -30,8 +34,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  TF_VERSION: "1.9.8"
-  TF_IN_AUTOMATION: "true"
+  TF_VERSION: '1.9.8'
+  TF_IN_AUTOMATION: 'true'
 
 jobs:
   calculations:
@@ -53,22 +57,26 @@ jobs:
     name: Apply — ${{ needs.calculations.outputs.environment }}
     runs-on: ubuntu-latest
     environment: ${{ needs.calculations.outputs.environment }}
+    concurrency:
+      cancel-in-progress: false
+      queue: max
+      group: apply-${{ needs.calculations.outputs.environment }}
     needs:
       - calculations
     steps:
       - id: checkout
         name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - id: terraform_setup
         name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
       - id: auth
         name: GCP Auth
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@v3
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
           project_id: ${{ needs.calculations.outputs.project_id }}
@@ -80,11 +88,12 @@ jobs:
 
       - id: terraform_apply
         name: Terraform Apply
-        working-directory: hcl/environments/${{ needs.calculations.outputs.environment }}/main
         env:
-          TF_VAR_CLOUDFLARE_API_TOKEN: ${{ fromJson(secrets.CLOUDFLARE_ZONE_USER_API_TOKEN).token }}
-          # TF_VAR_MAILGUN_API_KEY: $--{{ secrets.MAILGUN_API_KEY }}
-          # TF_VAR_ROLLBAR_API_KEY: $--{{ secrets.ROLLBAR_API_KEY }}
+          TF_VAR_cloudflare_api_token: ${{ fromJson(secrets.CLOUDFLARE_ZONE_USER_API_TOKEN).token }}
+          # TF_VAR_mailgun_api_key: $--{{ secrets.MAILGUN_API_KEY }}
+          # TF_VAR_rollbar_api_key: $--{{ secrets.ROLLBAR_API_KEY }}
+        working-directory: hcl/environments/${{ needs.calculations.outputs.environment }}/main
+        timeout-minutes: 40
         run: |
           terraform plan -out ${{ needs.calculations.outputs.project_id }}.tfplan && \
           terraform apply -auto-approve ${{ needs.calculations.outputs.project_id }}.tfplan
@@ -97,7 +106,7 @@ jobs:
 
       - id: upload_artifacts
         name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: terraform
           path: |
