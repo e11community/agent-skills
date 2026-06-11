@@ -1,0 +1,276 @@
+---
+name: github-action
+description: Use when authoring, modernizing, or reviewing a TypeScript GitHub Action — setting up action.yml, bundling src into a committed dist/ with esbuild, choosing the node runtime, handling service-account/secret auth, running CLIs via @actions/exec, deprecating inputs, or forking an existing action.
+---
+
+# Authoring a TypeScript GitHub Action
+
+## Overview
+
+A JavaScript/TypeScript GitHub Action runs a **committed, pre-bundled file**
+(`runs.main` in `action.yml`) — not your `src/`. The runner executes that one
+file directly with no `npm install`, so the action's source must be bundled
+into a single self-contained file that is committed to the repo. This skill
+captures the build, runtime, auth, and CLI-execution conventions we use, with
+the rationale for each, so they don't have to be re-derived per action.
+
+Reference implementations in this org: **`setup-firebase`** (service-account
+auth + CLI install) and **`envtemplate`** (file rendering + dual action/CLI).
+
+## When to Use
+
+- Creating a new TS action, or forking/modernizing an existing one
+- Setting up the `action.yml`, the bundler, or the `dist/` output
+- Deciding the node runtime (`node20` → `node24`)
+- Authenticating with a cloud provider / handling secrets in an action
+- Shelling out to a CLI from an action (`@actions/exec`)
+- Deprecating or removing inputs
+
+Not for: composite (`using: composite`) or Docker (`using: docker`) actions —
+those don't bundle JS. Not for reusable **workflows** (`.github/workflows/*.yml`).
+
+## Project Layout
+
+```
+my-action/
+  action.yml            # action metadata; runs.main → dist/action.js
+  src/
+    action.ts           # thin entry: calls run()
+    main.ts             # orchestration (run())
+    <feature>.ts        # one concern per module (auth, install, …)
+  dist/
+    action.js           # COMMITTED bundled output (esbuild)
+  package.json
+  tsconfig.json         # typecheck-only config
+  .prettierrc.js  .editorconfig  .prettierignore  .vscode/settings.json
+  .nvmrc          .gitattributes
+  README.md
+```
+
+## Build: esbuild bundles, tsc only type-checks
+
+This is the core of the modern setup. Two tools, one job each:
+
+- **esbuild** produces the artifact. Fast, minifies, bundles every import into
+  one CJS file. It does **not** type-check — it strips types and will happily
+  bundle code with type errors.
+- **tsc** runs as `tsc --noEmit` — pure type-checker, emits nothing.
+
+**Rationale:** esbuild already produces the file the action runs, so any JS that
+`tsc` emitted would be redundant output nobody consumes. Splitting gives you
+esbuild's speed for the build and tsc's safety for types. (The older `@vercel/ncc`
+did transpile+bundle in one tool, but esbuild is faster, actively maintained, and
+its `--minify` yields a noticeably smaller `dist`.)
+
+`package.json` scripts:
+
+```json
+{
+  "scripts": {
+    "build": "esbuild src/action.ts --bundle --platform=node --target=node24 --format=cjs --minify --outfile=dist/action.js",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write .",
+    "format-check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "esbuild": "^0.28",
+    "typescript": "^5"
+  }
+}
+```
+
+`tsconfig.json` — note `moduleResolution: "bundler"`:
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "forceConsistentCasingInFileNames": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "types": ["node"]
+  },
+  "include": ["src/**/*"]
+}
+```
+
+**Why `moduleResolution: "bundler"` and not `"nodenext"`:** `nodenext` forces
+explicit extensions on relative imports — and you must write `./main.js` even
+though the file is `./main.ts`. That's ugly and surprising. `bundler` resolution
+is purpose-built for the case where a bundler (esbuild) does the resolving, so
+relative imports stay clean and extensionless (`import {run} from './main'`).
+esbuild's output format is fixed by `--format=cjs`, so the tsconfig `module`
+setting has **zero** effect on the bundle — it only shapes what tsc accepts.
+
+`isolatedModules: true` matches how esbuild compiles each file in isolation, so
+tsc flags anything esbuild couldn't handle. Use an optional `catch {}` (no
+binding) so `noUnusedLocals` stays happy.
+
+## dist/ is committed — rebuild it every time
+
+The runner executes `dist/action.js` as-is. **After any change under `src/`,
+run `npm run build` and commit the regenerated `dist/`** — otherwise the action
+runs stale code. Mark it generated so it doesn't clutter diffs/reviews:
+
+```gitattributes
+dist/** -diff linguist-generated
+```
+
+## Runtime: node24
+
+```yaml
+# action.yml
+runs:
+  using: node24
+  main: dist/action.js
+```
+
+Keep the runtime consistent across `action.yml` (`using`), `.nvmrc` (`24`),
+`@types/node` (`^24`), and esbuild `--target=node24`. Don't leave a dangling
+`post-if:` with no `post:` script — it's a no-op; delete cruft like that.
+
+## Authenticating & handling secrets
+
+Patterns that bite people, with fixes:
+
+- **Write key files to `RUNNER_TEMP`, never `/opt` or other absolute paths.**
+  `/opt` may not be writable and isn't cleaned up between steps; `RUNNER_TEMP`
+  is always writable and runner-scoped. Fall back to `os.tmpdir()` for local runs.
+- **`setSecret` the secret VALUE, not the input name.** `setSecret('gcp_sa_key')`
+  masks the literal string `gcp_sa_key` — useless. Mask the actual value, and
+  mask both the raw and any decoded form.
+- **Accept base64-or-raw** for JSON keys (CI secret stores often hold base64).
+
+```typescript
+import {writeFileSync} from 'node:fs'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
+import {getInput, info, setSecret, exportVariable} from '@actions/core'
+
+const BASE64 = /^([0-9a-zA-Z+/]{4})*(([0-9a-zA-Z+/]{2}==)|([0-9a-zA-Z+/]{3}=))?$/
+
+export const login = async () => {
+  let key = getInput('gcp_sa_key')
+  if (!key) throw new Error('gcp_sa_key is required')
+  setSecret(key)                                   // mask the value, not the name
+
+  if (BASE64.test(key)) {
+    key = Buffer.from(key, 'base64').toString('utf8')
+    setSecret(key)                                 // mask the decoded form too
+  }
+
+  const keyPath = join(process.env.RUNNER_TEMP || tmpdir(), 'gcp_key.json')
+  info(`Storing service account key into ${keyPath}`)
+  writeFileSync(keyPath, key)
+  exportVariable('GOOGLE_APPLICATION_CREDENTIALS', keyPath)
+}
+```
+
+Use `node:`-prefixed builtin imports (`node:fs`) — explicit and unambiguous.
+
+## Running CLIs (`@actions/exec`)
+
+- **Pass args as an array, not an interpolated string:**
+  `exec('firebase', ['use', projectId], {cwd: path})`. String interpolation
+  invites quoting bugs and command injection from inputs.
+- **`exec('cd somewhere')` is a no-op** — `cd` in a child process never changes
+  the action's working directory. Use the `{cwd}` option instead.
+- **Prefer non-interactive CLI flags.** Legacy interactive flows hang in CI.
+  Example: replace `firebase use --add <id>` (interactive alias flow) with
+  `firebase use <id>`, or pass `--project <id>` per command. When in doubt, set
+  the target explicitly rather than relying on prompted/inferred state.
+- **Capture output** with `getExecOutput(tool, args, {ignoreReturnCode, silent})`.
+- **Fail correctly:** `setFailed(ex instanceof Error ? ex.message : JSON.stringify(ex))`.
+  `JSON.stringify(error)` drops the message (serializes to `{}`).
+
+## Deprecating inputs
+
+Don't silently break consumers. When removing/discouraging an input, keep
+honoring it for now but warn at runtime and label it in `action.yml`:
+
+```typescript
+import {warning} from '@actions/core'
+if (getInput('project_id')) {
+  warning('`project_id` is deprecated and will be removed in a future release. Prefer `--project`.')
+}
+```
+
+```yaml
+project_id:
+  description: >-
+    Deprecated. Prefer passing `--project` to your commands.
+  required: false
+```
+
+Removing an input outright (e.g. dropping `firebase_token`) is a **breaking
+change** — bump the major and say so in the PR/release notes. Actions are
+consumed by git ref (`owner/action@v2` / `@main`), so move the major tag.
+
+## Formatting & tooling
+
+House default is gts's Prettier config with two overrides (used by `setup-firebase`
+and the infra repo):
+
+```javascript
+// .prettierrc.js
+module.exports = {
+  ...require('gts/.prettierrc.json'), // singleQuote, no bracket spacing, arrowParens avoid
+  semi: false,
+  printWidth: 150,
+}
+```
+
+Add `gts` to devDependencies for that to resolve. `.prettierignore` should list
+`dist/`, `lib/`, `node_modules/`, `package-lock.json`. Reformat the whole repo
+with `prettier --write .`. (Some repos, e.g. `envtemplate`, use a standalone
+`.prettierrc` JSON with no gts dependency — either is fine; pick one and keep a
+repo internally consistent.)
+
+Ship `.editorconfig` and `.vscode/settings.json` (Prettier as default formatter,
+format-on-save for js/ts/json).
+
+## Forking etiquette
+
+When forking an existing action: set `author` to your org, and keep credit to
+the original author + a link to the upstream repo in the README.
+
+## Quick Reference
+
+| Concern | Convention |
+| --- | --- |
+| Bundler | esbuild → `dist/action.js`, `--bundle --platform=node --format=cjs --minify` |
+| Type safety | `tsc --noEmit` (esbuild does not type-check) |
+| Module resolution | `"bundler"` (clean extensionless imports), `module: esnext` |
+| Runtime | `node24` across `action.yml`, `.nvmrc`, `@types/node`, esbuild target |
+| dist | committed; rebuild after every `src/` change; `linguist-generated` |
+| Secret files | `RUNNER_TEMP`, never `/opt` |
+| Masking | `setSecret(value)` — value not name; raw + decoded |
+| exec | args array + `{cwd}`, never `cd` or string interpolation |
+| CLI flags | non-interactive (no `--add`-style prompts) |
+| Errors | `setFailed(err instanceof Error ? err.message : JSON.stringify(err))` |
+| Deprecation | `warning()` at runtime + `Deprecated` in `action.yml` |
+
+## Common Mistakes
+
+| Mistake | Fix |
+| --- | --- |
+| Forgetting to rebuild/commit `dist/` | Action runs stale code; always `npm run build` + commit after `src/` edits |
+| `nodenext` resolution → `.js` import extensions | Use `moduleResolution: "bundler"` |
+| Letting tsc emit JS alongside esbuild | `--noEmit`; esbuild owns the artifact |
+| `setSecret('input_name')` | Mask the value: `setSecret(getInput('x'))` |
+| Writing keys to `/opt/...` | `join(process.env.RUNNER_TEMP || tmpdir(), ...)` |
+| `exec('cd path')` then run | Pass `{cwd: path}` to `exec` |
+| `exec(\`tool ${userInput}\`)` | `exec('tool', [userInput])` |
+| Interactive CLI flow in CI (`firebase use --add`) | Non-interactive form (`firebase use <id>` / `--project`) |
+| `setFailed(JSON.stringify(error))` | `setFailed(error.message)` |
+| Dangling `post-if:` with no `post:` | Remove it |
+| Removing an input without a major bump | Breaking change — bump major, move the tag, note it |
