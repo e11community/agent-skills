@@ -866,8 +866,10 @@ Notes:
 - Working directory is `hcl/environments/<env>/<stack>/` (e.g. `.../dev/main`).
 - The matrix workflow ships with a `prototype_phase` that limits envs to
   `dev`/`ci`; switch to `smart_detect` when out of the prototype phase.
-- Provider secret `-var` flags (Cloudflare/Mailgun/Rollbar) are present but
-  commented out in the shipped files — uncomment when those providers are wired.
+- Provider secrets (Cloudflare/Mailgun/Rollbar) are passed as `TF_VAR_*` env
+  vars, present but commented out in the shipped files — uncomment when those
+  providers are wired. Env vars (not `-var` flags) keep secret values out of the
+  process command line.
 
 ---
 
@@ -1091,7 +1093,7 @@ echo "Initialized: ${STACK_DIR} (env: ${ENV}, stack: ${STACK})"
 | Where do I stop managing a resource?    | `removed` block with `lifecycle { destroy = false }`                    |
 | How do I promote a module to prod?      | Copy the module block from a lower env's stack `main.tf` to prod's      |
 | What is a stack?                        | A root-module subdir `environments/<env>/<stack>/`; prefix = stack name |
-| Where do secrets come from in CI?       | GitHub Actions secrets → `GCP_SA_KEY` / `-var` flags                    |
+| Where do secrets come from in CI?       | GitHub Actions secrets → `GCP_SA_KEY` / `TF_VAR_*` env vars             |
 | Can I interpolate the backend bucket?   | No — backend resolves before HCL evaluation                             |
 | What formats .tf files?                 | `terraform fmt` — NOT Prettier                                          |
 | What lints .tf files?                   | `tflint` — NOT ESLint                                                   |

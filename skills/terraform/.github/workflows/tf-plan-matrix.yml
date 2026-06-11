@@ -2,17 +2,23 @@ name: Terraform Plan, PR
 run-name: TF Plan, PR Matrix
 on:
   pull_request:
+    branches:
+      - develop
+      - main
     paths:
-      - "hcl/modules/**"
-      - "hcl/environments/**"
+      - 'hcl/modules/**'
+      - 'hcl/environments/**'
+      - 'hcl/org-modules/**'
+      - 'hcl/org-stacks/**'
+      - 'hcl/platform/**'
 
 permissions:
   contents: read
   pull-requests: write
 
 env:
-  TF_VERSION: "1.9.8"
-  TF_IN_AUTOMATION: "true"
+  TF_VERSION: '1.9.8'
+  TF_IN_AUTOMATION: 'true'
 
 jobs:
   detect_changes:
@@ -22,7 +28,7 @@ jobs:
       envs: ${{ steps.changes.outputs.envs }}
       projects: ${{ steps.changes.outputs.projects }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - id: changes
@@ -55,7 +61,7 @@ jobs:
     name: Plan — ${{ matrix.project_id }}
     needs:
       - detect_changes
-    uses: "./.github/workflows/tf-plan.yml"
+    uses: './.github/workflows/tf-plan.yml'
     secrets: inherit
     strategy:
       fail-fast: false
