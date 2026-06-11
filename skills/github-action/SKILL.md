@@ -14,9 +14,6 @@ into a single self-contained file that is committed to the repo. This skill
 captures the build, runtime, auth, and CLI-execution conventions we use, with
 the rationale for each, so they don't have to be re-derived per action.
 
-Reference implementations in this org: **`setup-firebase`** (service-account
-auth + CLI install) and **`envtemplate`** (file rendering + dual action/CLI).
-
 ## When to Use
 
 - Creating a new TS action, or forking/modernizing an existing one
@@ -217,8 +214,7 @@ consumed by git ref (`owner/action@v2` / `@main`), so move the major tag.
 
 ## Formatting & tooling
 
-House default is gts's Prettier config with two overrides (used by `setup-firebase`
-and the infra repo):
+House default is gts's Prettier config with two overrides:
 
 ```javascript
 // .prettierrc.js
@@ -229,14 +225,60 @@ module.exports = {
 }
 ```
 
-Add `gts` to devDependencies for that to resolve. `.prettierignore` should list
-`dist/`, `lib/`, `node_modules/`, `package-lock.json`. Reformat the whole repo
-with `prettier --write .`. (Some repos, e.g. `envtemplate`, use a standalone
-`.prettierrc` JSON with no gts dependency — either is fine; pick one and keep a
-repo internally consistent.)
+Add `gts` to devDependencies for that `require` to resolve. (A standalone
+`.prettierrc` JSON with no gts dependency is also fine — pick one and keep a repo
+internally consistent.) Reformat the whole repo with `prettier --write .`.
 
-Ship `.editorconfig` and `.vscode/settings.json` (Prettier as default formatter,
-format-on-save for js/ts/json).
+`.prettierignore`:
+
+```gitignore
+dist/
+lib/
+node_modules/
+package-lock.json
+```
+
+`.editorconfig`:
+
+```ini
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{js,ts,json,yml,yaml}]
+indent_style = space
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+```
+
+`.vscode/settings.json` — Prettier as the default formatter, format-on-save:
+
+```json
+{
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "[javascript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.formatOnSave": true
+  },
+  "[typescript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.formatOnSave": true
+  },
+  "[json]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.formatOnSave": true
+  },
+  "files.insertFinalNewline": true,
+  "files.trimTrailingWhitespace": true
+}
+```
 
 ## Forking etiquette
 
