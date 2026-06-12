@@ -1,0 +1,31 @@
+# Copy to .github/workflows/release.yml in a TypeScript action repo.
+# Actions are consumed by git ref (owner/action@v1), so the major tag must move
+# to each new release. This automates that: on every semver tag push
+# (vMAJOR.MINOR.PATCH), force-move the vMAJOR tag to the same commit. Consumers
+# pinned to @v1 then track the latest v1.x with no manual force-push.
+# See the "Releasing: move the major tag automatically" section of the skill.
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  major-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Move major tag to ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          MAJOR="${GITHUB_REF_NAME%%.*}"   # v1.2.3 -> v1
+          echo "Moving ${MAJOR} -> ${GITHUB_REF_NAME} ($(git rev-parse --short HEAD))"
+          # The major tag (e.g. v1) does not match v*.*.*, so this push does not
+          # retrigger this workflow.
+          git tag -f "$MAJOR"
+          git push -f origin "$MAJOR"
