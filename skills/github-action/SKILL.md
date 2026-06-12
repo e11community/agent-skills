@@ -37,6 +37,8 @@ my-action/
     <feature>.ts        # one concern per module (auth, install, …)
   dist/
     action.js           # COMMITTED bundled output (esbuild)
+  .github/workflows/
+    check.yml           # CI: typecheck + format + build + dist-sync guard
   package.json
   tsconfig.json         # typecheck-only config
   .prettierrc.js  .editorconfig  .prettierignore  .vscode/settings.json
@@ -45,10 +47,10 @@ my-action/
 ```
 
 Copyable versions of the static config files live in this skill's
-[`templates/`](templates/) directory — `tsconfig.json`, `.editorconfig`, and
-`.vscode/settings.json`. Short or project-specific files (`package.json`,
-`.prettierrc.js`, `.prettierignore`, `.gitattributes`, `action.yml`) stay inline
-below.
+[`templates/`](templates/) directory — `tsconfig.json`, `.editorconfig`,
+`.vscode/settings.json`, and `workflows/check.yml`. Short or project-specific
+files (`package.json`, `.prettierrc.js`, `.prettierignore`, `.gitattributes`,
+`action.yml`) stay inline below.
 
 ## Build: esbuild bundles, tsc only type-checks
 
@@ -113,6 +115,29 @@ runs stale code. Mark it generated so it doesn't clutter diffs/reviews:
 ```gitattributes
 dist/** -diff linguist-generated
 ```
+
+## CI: guard the committed dist/
+
+The single most common way to ship a broken action is to edit `src/` and forget
+to rebuild/commit `dist/` — the runner then executes stale code with no error.
+Add a CI workflow that rebuilds and fails the PR if the committed bundle differs
+from a fresh build. Copy [`templates/workflows/check.yml`](templates/workflows/check.yml)
+to `.github/workflows/check.yml`:
+
+```yaml
+# key step — everything else is checkout + setup-node + npm ci + the npm scripts
+- name: Verify dist/ is in sync with src/
+  run: |
+    if ! git diff --exit-code -- dist/; then
+      echo "::error::dist/ is out of date — run 'npm run build' and commit the result."
+      exit 1
+    fi
+```
+
+The workflow runs `typecheck`, `format-check`, and `build`, then the diff guard.
+It pins `permissions: contents: read` (it only reads the repo) and reads the
+node version from `.nvmrc` via `setup-node`'s `node-version-file`, so the runtime
+stays consistent with the rest of the setup.
 
 ## Runtime: node24
 
@@ -250,6 +275,7 @@ the original author + a link to the upstream repo in the README.
 | Module resolution | `"bundler"` (clean extensionless imports), `module: esnext` |
 | Runtime | `node24` across `action.yml`, `.nvmrc`, `@types/node`, esbuild target |
 | dist | committed; rebuild after every `src/` change; `linguist-generated` |
+| CI | `check.yml`: typecheck + format-check + build + `git diff --exit-code dist/` |
 | Secret files | `RUNNER_TEMP`, never `/opt` |
 | Masking | `setSecret(value)` — value not name; raw + decoded |
 | exec | args array + `{cwd}`, never `cd` or string interpolation |
