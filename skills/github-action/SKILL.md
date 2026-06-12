@@ -167,7 +167,7 @@ jobs:
   major-tag:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - run: |
           MAJOR="${GITHUB_REF_NAME%%.*}"   # v1.2.3 -> v1
           git tag -f "$MAJOR"
