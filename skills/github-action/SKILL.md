@@ -37,6 +37,9 @@ my-action/
     <feature>.ts        # one concern per module (auth, install, …)
   dist/
     action.js           # COMMITTED bundled output (esbuild)
+  .github/workflows/
+    check.yml           # CI: typecheck + format + build + dist-sync guard
+    release.yml         # CI: move the major tag (v1) on each semver tag push
   package.json
   tsconfig.json         # typecheck-only config
   .prettierrc.js  .editorconfig  .prettierignore  .vscode/settings.json
@@ -45,10 +48,10 @@ my-action/
 ```
 
 Copyable versions of the static config files live in this skill's
-[`templates/`](templates/) directory — `tsconfig.json`, `.editorconfig`, and
-`.vscode/settings.json`. Short or project-specific files (`package.json`,
-`.prettierrc.js`, `.prettierignore`, `.gitattributes`, `action.yml`) stay inline
-below.
+[`templates/`](templates/) directory — `tsconfig.json`, `.editorconfig`,
+`.vscode/settings.json`, `workflows/check.yml`, and `workflows/release.yml`.
+Short or project-specific files (`package.json`, `.prettierrc.js`,
+`.prettierignore`, `.gitattributes`, `action.yml`) stay inline below.
 
 ## Build: esbuild bundles, tsc only type-checks
 
@@ -113,6 +116,69 @@ runs stale code. Mark it generated so it doesn't clutter diffs/reviews:
 ```gitattributes
 dist/** -diff linguist-generated
 ```
+
+## CI: guard the committed dist/
+
+The single most common way to ship a broken action is to edit `src/` and forget
+to rebuild/commit `dist/` — the runner then executes stale code with no error.
+Add a CI workflow that rebuilds and fails the PR if the committed bundle differs
+from a fresh build. Copy [`templates/workflows/check.yml`](templates/workflows/check.yml)
+to `.github/workflows/check.yml`:
+
+```yaml
+# key step — everything else is checkout + setup-node + npm ci + the npm scripts
+- name: Verify dist/ is in sync with src/
+  run: |
+    if ! git diff --exit-code -- dist/; then
+      echo "::error::dist/ is out of date — run 'npm run build' and commit the result."
+      exit 1
+    fi
+```
+
+The workflow runs `typecheck`, `format-check`, and `build`, then the diff guard.
+It pins `permissions: contents: read` (it only reads the repo) and reads the
+node version from `.nvmrc` via `setup-node`'s `node-version-file`, so the runtime
+stays consistent with the rest of the setup.
+
+## Releasing: move the major tag automatically
+
+Actions are consumed by git ref — most callers pin `owner/action@v1`, the
+**moving major tag**, not a full version. So every release has to re-point `v1`
+at the new commit. Doing it by hand is the force-push dance:
+
+```bash
+git tag -a v1.2.0 -m "v1.2.0"   # new immutable point release
+git tag -f -a v1 -m "v1"        # move the major tag
+git push origin v1.2.0
+git push -f origin v1           # force-update the moving tag
+```
+
+Automate the tag move with [`templates/workflows/release.yml`](templates/workflows/release.yml)
+→ `.github/workflows/release.yml`. On every `vMAJOR.MINOR.PATCH` tag push it
+force-moves `vMAJOR` to that commit:
+
+```yaml
+on:
+  push:
+    tags: ['v*.*.*'] # only full semver tags, NOT the major tag itself
+permissions:
+  contents: write # needs to push the moved tag
+jobs:
+  major-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          MAJOR="${GITHUB_REF_NAME%%.*}"   # v1.2.3 -> v1
+          git tag -f "$MAJOR"
+          git push -f origin "$MAJOR"
+```
+
+With it in place, releasing is just `git push origin v1.2.0` — the workflow moves
+`v1`. The major tag (`v1`) does **not** match `v*.*.*`, so moving it does not
+retrigger the workflow (no loop). Bump to a new major (`v2.0.0` + a new `v2`
+tag) only for breaking changes — renamed/removed inputs, changed defaults — so
+`@v1` consumers keep the old behavior until they opt in.
 
 ## Runtime: node24
 
@@ -250,6 +316,8 @@ the original author + a link to the upstream repo in the README.
 | Module resolution | `"bundler"` (clean extensionless imports), `module: esnext` |
 | Runtime | `node24` across `action.yml`, `.nvmrc`, `@types/node`, esbuild target |
 | dist | committed; rebuild after every `src/` change; `linguist-generated` |
+| CI | `check.yml`: typecheck + format-check + build + `git diff --exit-code dist/` |
+| Releasing | `release.yml`: move `vMAJOR` tag on each `v*.*.*` tag push |
 | Secret files | `RUNNER_TEMP`, never `/opt` |
 | Masking | `setSecret(value)` — value not name; raw + decoded |
 | exec | args array + `{cwd}`, never `cd` or string interpolation |
