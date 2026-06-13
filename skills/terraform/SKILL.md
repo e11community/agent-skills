@@ -51,6 +51,8 @@ assume they always exist.
 ## When to Use
 
 - Adding, removing, or editing child modules in `hcl/modules/`
+- Sourcing a module from another (often cross-org) **private repo** via a
+  `git::` source — see "Reusing Modules Across Repos"
 - Adding, removing, or editing GCP Organization-wide child modules in
   `hcl/org-modules/` (folders, org IAM, org policies, org log sinks)
 - Wiring org-modules into an org-stack (`hcl/org-stacks/<stack>/main.tf`)
@@ -271,6 +273,78 @@ When creating a new child module, follow this sequence exactly:
    terraform validate
    ```
 
+## Reusing Modules Across Repos (private git sources)
+
+Most modules here are local (`source = "../../../modules/<name>"`). To reuse a
+module that lives in **another repo** — often a **different org** — Terraform
+supports git sources via go-getter:
+
+```hcl
+module "shared_networking" {
+  source = "git::https://github.com/other-org/tf-modules.git//networking?ref=v1.4.0"
+
+  project_id = var.project_id
+  # ...module inputs
+}
+```
+
+- `git::` forces the git getter. Use the **HTTPS** form (not `git@…`) so the
+  credential rewrite below applies.
+- `//` separates the repo from the **subdirectory** of the module within it
+  (omit it when the repo root *is* the module).
+- `?ref=` pins a **tag or commit SHA** — always pin, for the same reason you pin
+  provider versions. A moving branch ref makes builds non-reproducible.
+
+### Auth: Repo Reacher (CI)
+
+The default `GITHUB_TOKEN` can read only the workflow's own repo, so cloning a
+private module repo in another org fails. Authorize it once at the top of the job
+with [`e11community/repo-reacher`](https://github.com/e11community/repo-reacher) —
+a GitHub App that mints scoped, short-lived tokens and rewrites global git config
+so every later `git::https://github.com/<owner>/…` clone (and therefore
+`terraform init`) authenticates transparently:
+
+```yaml
+steps:
+  - uses: e11community/repo-reacher@v1
+    env:
+      # An action can't read vars/secrets by name — map them in here once.
+      REPO_REACHER_APP_ID: ${{ vars.REPO_REACHER_APP_ID }} # org/repo variable (App ID, not secret)
+      REPO_REACHER_KEY: ${{ secrets.REPO_REACHER_KEY }} # org/repo secret (App private key, PEM)
+    with:
+      friends: |
+        other-org # owner(s) whose private module repos you source
+      # permissions: contents:read   # default — least privilege needed to clone
+  - uses: actions/checkout@v6
+  - run: terraform -chdir=hcl/environments/dev/main init
+```
+
+The `REPO_REACHER_APP_ID` **variable** and `REPO_REACHER_KEY` **secret** must
+exist in each org that runs these workflows — a one-time setup (org-level is
+cleanest). No per-module tokens, no credentials in `source`. (Locally, give your
+laptop's git its own GitHub credential so `init` can clone the same private
+sources — see repo-reacher's `docs/MACOS.md`.)
+
+### Run `terraform init` after adding or re-pinning a git source
+
+Terraform fetches remote modules into `.terraform/modules/` at **`init`** time —
+nothing reads the remote repo during `plan`/`validate`. So after you **add a new
+git-sourced `module` block, or change its `?ref=`**, run init (use `-upgrade` to
+re-fetch a moved ref):
+
+```bash
+terraform -chdir=hcl/environments/dev/main init -upgrade
+```
+
+This isn't only for planning. The **Terraform language server (`terraform-ls`)
+can only introspect a remote module once it's present in `.terraform/modules/`.**
+Until you init, the editor has nothing to read for that block — **no
+autocompletion of the module's input variables/outputs, no go-to-definition, no
+validation.** The classic symptom: you add a `module "x"` with a git source,
+start typing its inputs, and the editor offers nothing — run `init` and
+IntelliSense lights up. Re-init after bumping the `ref`, or the editor keeps
+offering the *old* version's inputs.
+
 ## Organization-Wide Modules (`hcl/org-modules/`)
 
 GCP Organization-level resources (folders, org IAM, org policies, org log sinks,
@@ -446,6 +520,11 @@ prod-project roles.
   `multi_tenant` block in `google_identity_platform_config` (google ≥ 7.21):
   registry.terraform.io/providers/hashicorp/google/latest/docs/resources/identity_platform_config#nested_multi_tenant
 - `google_app_engine_application` silently provisions a Firestore in Datastore mode.
+- A git-sourced (`git::https://…?ref=`) module is invisible to `terraform-ls`
+  until `terraform init` fetches it into `.terraform/modules/` — no IntelliSense
+  for its inputs/outputs until then, and re-init after changing `?ref=`. Cloning
+  private cross-org sources in CI needs Repo Reacher. See "Reusing Modules Across
+  Repos".
 
 ## Installing into a Repo
 
