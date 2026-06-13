@@ -16,8 +16,13 @@ ORG=your-org
 REPO=your-action
 DESC="One-line description of the action."
 
-gh repo create "$ORG/$REPO" --private --description "$DESC"
+# Public: an action consumed as `owner/action@v1` shouldn't require auth just to be reused.
+gh repo create "$ORG/$REPO" --public --description "$DESC"
 ```
+
+Create the action repo **public** — actions are referenced by ref (`owner/action@v1`)
+and consumers shouldn't have to authenticate just to reuse one. (Any private repos the
+action _operates on_ are a separate concern, handled by its own auth.)
 
 ## 2. Protect the default branch (block deletion + force-push)
 
