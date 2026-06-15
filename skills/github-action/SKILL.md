@@ -37,9 +37,11 @@ my-action/
     <feature>.ts        # one concern per module (auth, install, …)
   dist/
     action.js           # COMMITTED bundled output (esbuild)
-  .github/workflows/
-    check.yml           # CI: commitlint (PRs) + typecheck + format + build + dist-sync guard
-    release.yml         # CI: auto-release on merge to main (version + changelog + tags)
+  .github/
+    dependabot.yml      # weekly dep updates; conventional-commit messages
+    workflows/
+      check.yml         # CI: commitlint (PRs) + typecheck + format + build + dist-sync guard
+      release.yml       # CI: auto-release on merge to main (version + changelog + tags)
   .husky/
     commit-msg          # local hook: commitlint validates the message
     pre-commit          # local hook: lint-staged runs prettier on staged files
@@ -57,7 +59,7 @@ my-action/
 Copyable versions of the static config files live in this skill's
 [`templates/`](templates/) directory — `tsconfig.json`, `.editorconfig`,
 `.vscode/settings.json`, `commitlint.config.js`, `.husky/{commit-msg,pre-commit}`,
-`ADMIN.md`, `workflows/check.yml`, and `workflows/release.yml`.
+`ADMIN.md`, `dependabot.yml`, `workflows/check.yml`, and `workflows/release.yml`.
 Short or project-specific files (`package.json`, `.prettierrc.js`,
 `.prettierignore`, `.gitattributes`, `action.yml`) stay inline below.
 
@@ -147,6 +149,27 @@ The workflow runs `typecheck`, `format-check`, and `build`, then the diff guard.
 It pins `permissions: contents: read` (it only reads the repo) and reads the
 node version from `.nvmrc` via `setup-node`'s `node-version-file`, so the runtime
 stays consistent with the rest of the setup.
+
+## Pin official actions to the current major
+
+Pin third-party actions to their **current major** (`actions/checkout@v6`), not
+whatever major you remember — older majors run on deprecated runner Node versions
+and draw warnings. The templates here are kept current; when you write a *new*
+workflow, use this table rather than habit:
+
+| Action | Major |
+| --- | --- |
+| `actions/checkout` | `@v6` |
+| `actions/setup-node` | `@v6` |
+| `actions/setup-python` | `@v6` |
+| `actions/setup-go` | `@v6` |
+| `actions/setup-java` | `@v5` |
+| `actions/cache` | `@v5` |
+| `actions/upload-artifact` | `@v7` |
+| `actions/download-artifact` | `@v8` |
+
+_Current as of 2026-06-15._ Dependabot's `github-actions` updates (below) keep
+already-pinned refs moving as new majors ship.
 
 ## Conventional commits drive the version
 
@@ -243,6 +266,31 @@ branch rules don't govern). It breaks only if you **require pull requests** (or 
 signed commits) on `main`; then add the `github-actions` bot to the ruleset bypass list or use a
 GitHub App token. [`templates/ADMIN.md`](templates/ADMIN.md) → `docs/ADMIN.md` has a `gh` script
 to create the repo and apply the lightweight (deletion + force-push) protection.
+
+## Dependency updates (Dependabot)
+
+Dependabot keeps the pinned `github-actions` refs and the npm toolchain current.
+Copy [`templates/dependabot.yml`](templates/dependabot.yml) → `.github/dependabot.yml`.
+Two ecosystems: `github-actions` (the `@v6`-style refs in workflows) and `npm`.
+
+The one subtlety that makes this skill-specific: **make Dependabot's commit
+messages Conventional-Commit-shaped**, or they fail `commitlint` and confuse the
+release bump engine. Set `commit-message.prefix` to a *non-releasing* type
+(`ci` for actions, `chore` for npm) with `include: scope` so messages read
+`ci(deps): …` / `chore(deps): …` — well-formed, and they don't auto-cut a release
+on their own (correct: a dep bump shouldn't surprise-release).
+
+```yaml
+commit-message:
+  prefix: chore        # ci(deps): … for the github-actions ecosystem
+  include: scope       # appends the (deps) / (deps-dev) scope
+```
+
+**dist caveat:** a bump to a **bundled runtime** dependency (`@actions/*`, etc.)
+changes `dist/action.js`, but Dependabot does **not** rebuild `dist/` — so
+`check.yml`'s dist-sync guard will fail that PR until you push a `npm run build`
+commit onto it. `github-actions` and dev-tooling bumps don't touch `dist/`, so
+they sail through; keep runtime deps lean to minimize the manual-rebuild cases.
 
 ## Runtime: node24
 
@@ -382,6 +430,8 @@ the original author + a link to the upstream repo in the README.
 | dist | committed; rebuild after every `src/` change; `linguist-generated` |
 | Commits | Conventional Commits; `commit-msg` hook (commitlint+husky) + PR lint in CI; `npm run commit` (cz) |
 | CI | `check.yml`: commitlint (PRs) + typecheck + format-check + build + `git diff --exit-code dist/` |
+| Action refs | pin official actions to current major (`checkout@v6`, `setup-node@v6`) — see the version table |
+| Deps | Dependabot (`github-actions` + `npm`), conventional-commit messages (`ci(deps)` / `chore(deps)`) |
 | Releasing | `release.yml`: auto on merge to main — bump from commits, changelog, tag `vX.Y.Z` + move `vMAJOR`, GitHub Release |
 | Changelog | generated by `conventional-changelog`; `CHANGELOG.md` in `.prettierignore` |
 | Secret files | `RUNNER_TEMP`, never `/opt` |
@@ -409,4 +459,6 @@ the original author + a link to the upstream repo in the README.
 | Release commit lacks `chore`/`[skip ci]` | Infinite release loop — the release push retriggers the workflow |
 | Separate tag-triggered major-tag mover | A `GITHUB_TOKEN`-pushed tag won't trigger it — fold the `vMAJOR` move into the release job |
 | `conventional-changelog-cli` | Deprecated — use the maintained `conventional-changelog` package |
+| Pinning `actions/checkout@v4` from memory | Use the current major (`@v6`) — see the version table |
+| Dependabot messages like `Bump x` | Set `commit-message.prefix` + `include: scope` so they pass commitlint |
 | `CHANGELOG.md` not in `.prettierignore` | `format-check` fails after each release — generated file fights Prettier |
