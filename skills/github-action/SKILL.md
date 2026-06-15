@@ -37,9 +37,12 @@ my-action/
     <feature>.ts        # one concern per module (auth, install, …)
   dist/
     action.js           # COMMITTED bundled output (esbuild)
-  .github/workflows/
-    check.yml           # CI: commitlint (PRs) + typecheck + format + build + dist-sync guard
-    release.yml         # CI: auto-release on merge to main (version + changelog + tags)
+  .github/
+    dependabot.yml      # weekly dep updates; conventional-commit messages
+    workflows/
+      validate.yml      # CI: commitlint (PRs) + typecheck + format + build + dist-sync guard
+      pr-title.yml      # CI: PR title is a Conventional Commit (what squash-merge ships)
+      release.yml       # CI: auto-release on merge to main (version + changelog + tags)
   .husky/
     commit-msg          # local hook: commitlint validates the message
     pre-commit          # local hook: lint-staged runs prettier on staged files
@@ -55,9 +58,10 @@ my-action/
 ```
 
 Copyable versions of the static config files live in this skill's
-[`templates/`](templates/) directory — `tsconfig.json`, `.editorconfig`,
-`.vscode/settings.json`, `commitlint.config.js`, `.husky/{commit-msg,pre-commit}`,
-`ADMIN.md`, `workflows/check.yml`, and `workflows/release.yml`.
+[`templates/`](templates/) directory, mirroring the repo layout — `tsconfig.json`,
+`.editorconfig`, `.vscode/settings.json`, `commitlint.config.js`,
+`.husky/{commit-msg,pre-commit}`, `ADMIN.md`, `.github/dependabot.yml`, and
+`.github/workflows/{validate,pr-title,release}.yml`.
 Short or project-specific files (`package.json`, `.prettierrc.js`,
 `.prettierignore`, `.gitattributes`, `action.yml`) stay inline below.
 
@@ -130,8 +134,8 @@ dist/** -diff linguist-generated
 The single most common way to ship a broken action is to edit `src/` and forget
 to rebuild/commit `dist/` — the runner then executes stale code with no error.
 Add a CI workflow that rebuilds and fails the PR if the committed bundle differs
-from a fresh build. Copy [`templates/workflows/check.yml`](templates/workflows/check.yml)
-to `.github/workflows/check.yml`:
+from a fresh build. Copy [`templates/.github/workflows/validate.yml`](templates/.github/workflows/validate.yml)
+to `.github/workflows/validate.yml`:
 
 ```yaml
 # key step — everything else is checkout + setup-node + npm ci + the npm scripts
@@ -147,6 +151,72 @@ The workflow runs `typecheck`, `format-check`, and `build`, then the diff guard.
 It pins `permissions: contents: read` (it only reads the repo) and reads the
 node version from `.nvmrc` via `setup-node`'s `node-version-file`, so the runtime
 stays consistent with the rest of the setup.
+
+## Pinning actions
+
+Two postures by trust level: **platform-vendor actions** (GitHub, Google,
+HashiCorp, Docker, Microsoft/Azure) ride the **current major tag**;
+**community/third-party actions** must be **SHA-pinned** with the version in a
+trailing comment. The split is a supply-chain stance — vendor orgs are trusted to
+not rewrite a major tag maliciously; a random community action is a risk (see the
+`tj-actions/changed-files` compromise, where a moving tag was repointed to
+credential-stealing code).
+
+### Platform vendors → current major tag
+
+Pin to the **current major** (`actions/checkout@v6`), not whatever major you
+remember — older majors run on deprecated runner Node versions and draw warnings.
+When you write a *new* workflow, use this table rather than habit:
+
+| Vendor | Action | Major |
+| --- | --- | --- |
+| GitHub | `actions/checkout` | `@v6` |
+| GitHub | `actions/setup-node` | `@v6` |
+| GitHub | `actions/setup-python` | `@v6` |
+| GitHub | `actions/setup-go` | `@v6` |
+| GitHub | `actions/setup-java` | `@v5` |
+| GitHub | `actions/cache` | `@v5` |
+| GitHub | `actions/upload-artifact` | `@v7` |
+| GitHub | `actions/download-artifact` | `@v8` |
+| GitHub | `actions/github-script` | `@v9` |
+| GitHub | `actions/dependency-review-action` | `@v5` |
+| Google | `google-github-actions/auth` | `@v3` |
+| Google | `google-github-actions/setup-gcloud` | `@v3` |
+| Google | `google-github-actions/deploy-cloudrun` | `@v3` |
+| Google | `googleapis/release-please-action` | `@v5` |
+| HashiCorp | `hashicorp/setup-terraform` | `@v4` |
+| Docker | `docker/login-action` | `@v4` |
+| Docker | `docker/setup-buildx-action` | `@v4` |
+| Docker | `docker/setup-qemu-action` | `@v4` |
+| Docker | `docker/build-push-action` | `@v7` |
+| Microsoft/Azure | `azure/login` | `@v3` |
+| Microsoft/Azure | `Azure/functions-action` | `@v1` |
+
+_Current as of 2026-06-15._ Dependabot's `github-actions` updates (below) keep
+already-pinned refs moving as new majors ship.
+
+> **release-please moved.** `google-github-actions/release-please-action` and
+> `GoogleCloudPlatform/release-please-action` are **deprecated** homes — the
+> maintained action is `googleapis/release-please-action@v5`.
+
+### Community actions → SHA + version comment
+
+Everything outside those vendor orgs (e.g. `peter-evans/*`, `pnpm/action-setup`,
+`codecov/codecov-action`, `aquasecurity/trivy-action`, `nrwl/nx-set-shas`) is
+community-maintained. Pin the **immutable 40-char commit SHA**, and put **the most
+specific version the action publishes** in a trailing comment — full `vX.Y.Z` when
+it tags patch releases, but just the major (`@v2`) when that's all upstream tags.
+The comment documents what the SHA maps to; match upstream's own granularity
+rather than inventing a semver.
+
+```yaml
+- uses: peter-evans/create-pull-request@<40-char-sha> # v6.1.0   # full semver when published
+- uses: some-org/some-action@<40-char-sha>            # v2        # upstream only tags majors
+```
+
+Dependabot bumps the SHA **and** rewrites the comment, so updates stay legible.
+**Never** pin a third-party action to `@main`/`@master` — a moving branch is the
+worst case, executing whatever lands upstream.
 
 ## Conventional commits drive the version
 
@@ -192,12 +262,12 @@ Copy [`templates/.husky/commit-msg`](templates/.husky/commit-msg)
 (`npx --no -- commitlint --edit "$1"`) and
 [`templates/.husky/pre-commit`](templates/.husky/pre-commit) (`npx --no -- lint-staged`).
 `npm install` runs `prepare` → `husky`, wiring the hooks. Local hooks can be bypassed
-(`--no-verify`), so `check.yml` **also** lints the PR's commit range — the bump engine
+(`--no-verify`), so `validate.yml` **also** lints the PR's commit range — the bump engine
 depends on well-formed messages.
 
 ### The release workflow
 
-Copy [`templates/workflows/release.yml`](templates/workflows/release.yml) →
+Copy [`templates/.github/workflows/release.yml`](templates/.github/workflows/release.yml) →
 `.github/workflows/release.yml`. On push to `main` (or manual `workflow_dispatch`) it:
 
 1. Reads commits since the last `v*.*.*` tag. If none are `feat`/`fix`/`perf` or breaking,
@@ -234,6 +304,29 @@ Bump to a new major only for breaking changes (`feat!:` / a `BREAKING CHANGE:` f
 renamed/removed inputs, changed defaults — so `@v1` consumers keep the old behavior until they
 opt in.
 
+### Squash-merge: the PR title is what ships
+
+If you **squash-merge** (most repos do), the individual branch commits are discarded — the
+squash commit's subject is what lands on `main`, and that's what `release.yml` parses for the
+bump. So linting the branch commits in `validate.yml` does **not** protect the release pipeline;
+the **PR title** does. Two pieces make it deterministic:
+
+1. **Set the repo to use the PR title for the squash subject.** GitHub's default
+   (`squash_merge_commit_title = COMMIT_OR_PR_TITLE`) uses the single commit's subject for a
+   one-commit PR but silently falls back to the (often stale, auto-filled) PR title once there
+   are 2+ commits — so a conventional top commit still gets a non-conventional squash subject and
+   the release is skipped. Pin it:
+
+   ```bash
+   gh api -X PATCH repos/OWNER/REPO -f squash_merge_commit_title=PR_TITLE
+   ```
+
+2. **Lint the PR title.** Copy [`templates/.github/workflows/pr-title.yml`](templates/.github/workflows/pr-title.yml)
+   → `.github/workflows/pr-title.yml`. It runs `amannn/action-semantic-pull-request` on
+   `pull_request` (`types: [opened, edited, synchronize, reopened]`) so a non-conventional title
+   fails the check and re-validates the moment it's edited. Use `pull_request` (not
+   `pull_request_target`) so it runs from the PR head and validates the PR that introduces it.
+
 ### Token & branch protection
 
 The workflow pushes with the built-in `GITHUB_TOKEN` (`permissions: contents: write`). That's
@@ -243,6 +336,31 @@ branch rules don't govern). It breaks only if you **require pull requests** (or 
 signed commits) on `main`; then add the `github-actions` bot to the ruleset bypass list or use a
 GitHub App token. [`templates/ADMIN.md`](templates/ADMIN.md) → `docs/ADMIN.md` has a `gh` script
 to create the repo and apply the lightweight (deletion + force-push) protection.
+
+## Dependency updates (Dependabot)
+
+Dependabot keeps the pinned `github-actions` refs and the npm toolchain current.
+Copy [`templates/.github/dependabot.yml`](templates/.github/dependabot.yml) → `.github/dependabot.yml`.
+Two ecosystems: `github-actions` (the `@v6`-style refs in workflows) and `npm`.
+
+The one subtlety that makes this skill-specific: **make Dependabot's commit
+messages Conventional-Commit-shaped**, or they fail `commitlint` and confuse the
+release bump engine. Set `commit-message.prefix` to a *non-releasing* type
+(`ci` for actions, `chore` for npm) with `include: scope` so messages read
+`ci(deps): …` / `chore(deps): …` — well-formed, and they don't auto-cut a release
+on their own (correct: a dep bump shouldn't surprise-release).
+
+```yaml
+commit-message:
+  prefix: chore        # ci(deps): … for the github-actions ecosystem
+  include: scope       # appends the (deps) / (deps-dev) scope
+```
+
+**dist caveat:** a bump to a **bundled runtime** dependency (`@actions/*`, etc.)
+changes `dist/action.js`, but Dependabot does **not** rebuild `dist/` — so
+`validate.yml`'s dist-sync guard will fail that PR until you push a `npm run build`
+commit onto it. `github-actions` and dev-tooling bumps don't touch `dist/`, so
+they sail through; keep runtime deps lean to minimize the manual-rebuild cases.
 
 ## Runtime: node24
 
@@ -336,20 +454,30 @@ consumed by git ref (`owner/action@v2` / `@main`), so move the major tag.
 
 ## Formatting & tooling
 
-House default is gts's Prettier config with two overrides:
+House style is gts's Prettier preset with two overrides — but **inline it; don't
+depend on gts for it.** `gts` exists to be a full lint/format toolchain (ESLint +
+its own `tsconfig`); a bundled esbuild action uses neither (esbuild compiles,
+`tsc --noEmit` type-checks). Pulling `gts` in *only* for `require('gts/.prettierrc.json')`
+drags its entire ESLint + inquirer tree into `devDependencies` — which is a
+recurring source of npm-audit highs (e.g. `minimatch`, and `tmp`, which has had no
+upstream fix) for a four-line config you can paste. So write the preset directly:
 
 ```javascript
-// .prettierrc.js
+// .prettierrc.js — gts's preset, inlined (no gts dependency)
 module.exports = {
-  ...require('gts/.prettierrc.json'), // singleQuote, no bracket spacing, arrowParens avoid
+  bracketSpacing: false,
+  singleQuote: true,
+  trailingComma: 'es5',
+  arrowParens: 'avoid',
   semi: false,
   printWidth: 150,
 }
 ```
 
-Add `gts` to devDependencies for that `require` to resolve. (A standalone
-`.prettierrc` JSON with no gts dependency is also fine — pick one and keep a repo
-internally consistent.) Reformat the whole repo with `prettier --write .`.
+Reformat the whole repo with `prettier --write .`. Only add `gts` to
+`devDependencies` if you actually adopt it as your linter (`gts lint` + its
+`tsconfig` base) — and note its major bumps move the preset (gts 7 flipped
+`trailingComma` to `all`), another reason to pin the values yourself.
 
 `.prettierignore`:
 
@@ -381,7 +509,11 @@ the original author + a link to the upstream repo in the README.
 | Runtime | `node24` across `action.yml`, `.nvmrc`, `@types/node`, esbuild target |
 | dist | committed; rebuild after every `src/` change; `linguist-generated` |
 | Commits | Conventional Commits; `commit-msg` hook (commitlint+husky) + PR lint in CI; `npm run commit` (cz) |
-| CI | `check.yml`: commitlint (PRs) + typecheck + format-check + build + `git diff --exit-code dist/` |
+| CI | `validate.yml`: commitlint (PRs) + typecheck + format-check + build + `git diff --exit-code dist/` |
+| Squash merge | set `squash_merge_commit_title=PR_TITLE`; lint the PR title (`pr-title.yml`) — the squashed subject is what release.yml parses |
+| Action refs (vendor) | platform vendors (GitHub/Google/HashiCorp/Docker/Azure) → current major (`checkout@v6`) — see the table |
+| Action refs (community) | non-vendor actions → SHA pin + `# version` comment (as specific as upstream tags); never `@main` |
+| Deps | Dependabot (`github-actions` + `npm`), conventional-commit messages (`ci(deps)` / `chore(deps)`) |
 | Releasing | `release.yml`: auto on merge to main — bump from commits, changelog, tag `vX.Y.Z` + move `vMAJOR`, GitHub Release |
 | Changelog | generated by `conventional-changelog`; `CHANGELOG.md` in `.prettierignore` |
 | Secret files | `RUNNER_TEMP`, never `/opt` |
@@ -408,5 +540,11 @@ the original author + a link to the upstream repo in the README.
 | Removing an input without a major bump | Breaking change — use `feat!:` / `BREAKING CHANGE:` so the release auto-bumps major |
 | Release commit lacks `chore`/`[skip ci]` | Infinite release loop — the release push retriggers the workflow |
 | Separate tag-triggered major-tag mover | A `GITHUB_TOKEN`-pushed tag won't trigger it — fold the `vMAJOR` move into the release job |
+| Relying on the conventional branch commit under squash-merge | Squash ships the PR title — set `squash_merge_commit_title=PR_TITLE` + lint it (`pr-title.yml`) |
 | `conventional-changelog-cli` | Deprecated — use the maintained `conventional-changelog` package |
+| Pinning `actions/checkout@v4` from memory | Use the current major (`@v6`) — see the version table |
+| Tag-pinning a community action (`peter-evans/...@v6`) | SHA-pin it + trailing `# version` comment (vendor orgs may ride major tags; others may not) |
+| Any third-party action on `@main`/`@master` | Moving branch = runs whatever lands upstream — pin a SHA |
+| Dependabot messages like `Bump x` | Set `commit-message.prefix` + `include: scope` so they pass commitlint |
+| Depending on `gts` just for its Prettier preset | Inline the 4-line preset in `.prettierrc.js`; gts's ESLint/inquirer tree brings audit highs |
 | `CHANGELOG.md` not in `.prettierignore` | `format-check` fails after each release — generated file fights Prettier |

@@ -13,6 +13,7 @@
 # you later require PRs / status checks / signed commits on main, add the github-actions bot to
 # the ruleset bypass list or use a GitHub App token. See templates/ADMIN.md.
 name: release
+run-name: Release
 
 on:
   push:
