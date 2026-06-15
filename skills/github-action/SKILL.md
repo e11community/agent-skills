@@ -384,20 +384,30 @@ consumed by git ref (`owner/action@v2` / `@main`), so move the major tag.
 
 ## Formatting & tooling
 
-House default is gts's Prettier config with two overrides:
+House style is gts's Prettier preset with two overrides — but **inline it; don't
+depend on gts for it.** `gts` exists to be a full lint/format toolchain (ESLint +
+its own `tsconfig`); a bundled esbuild action uses neither (esbuild compiles,
+`tsc --noEmit` type-checks). Pulling `gts` in *only* for `require('gts/.prettierrc.json')`
+drags its entire ESLint + inquirer tree into `devDependencies` — which is a
+recurring source of npm-audit highs (e.g. `minimatch`, and `tmp`, which has had no
+upstream fix) for a four-line config you can paste. So write the preset directly:
 
 ```javascript
-// .prettierrc.js
+// .prettierrc.js — gts's preset, inlined (no gts dependency)
 module.exports = {
-  ...require('gts/.prettierrc.json'), // singleQuote, no bracket spacing, arrowParens avoid
+  bracketSpacing: false,
+  singleQuote: true,
+  trailingComma: 'es5',
+  arrowParens: 'avoid',
   semi: false,
   printWidth: 150,
 }
 ```
 
-Add `gts` to devDependencies for that `require` to resolve. (A standalone
-`.prettierrc` JSON with no gts dependency is also fine — pick one and keep a repo
-internally consistent.) Reformat the whole repo with `prettier --write .`.
+Reformat the whole repo with `prettier --write .`. Only add `gts` to
+`devDependencies` if you actually adopt it as your linter (`gts lint` + its
+`tsconfig` base) — and note its major bumps move the preset (gts 7 flipped
+`trailingComma` to `all`), another reason to pin the values yourself.
 
 `.prettierignore`:
 
@@ -461,4 +471,5 @@ the original author + a link to the upstream repo in the README.
 | `conventional-changelog-cli` | Deprecated — use the maintained `conventional-changelog` package |
 | Pinning `actions/checkout@v4` from memory | Use the current major (`@v6`) — see the version table |
 | Dependabot messages like `Bump x` | Set `commit-message.prefix` + `include: scope` so they pass commitlint |
+| Depending on `gts` just for its Prettier preset | Inline the 4-line preset in `.prettierrc.js`; gts's ESLint/inquirer tree brings audit highs |
 | `CHANGELOG.md` not in `.prettierignore` | `format-check` fails after each release — generated file fights Prettier |
