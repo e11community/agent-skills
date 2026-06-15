@@ -1,8 +1,9 @@
-# Copy to .github/workflows/check.yml in a TypeScript action repo.
+# Copy to .github/workflows/validate.yml in a TypeScript action repo.
 # Verifies the source type-checks, is formatted, builds — and crucially that the
 # committed dist/ bundle matches a fresh build, so the action never ships stale
 # code. See the "CI: guard the committed dist/" section of the skill.
-name: check
+name: validate
+run-name: Validate
 
 on:
   pull_request:
