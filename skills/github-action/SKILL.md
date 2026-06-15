@@ -152,26 +152,71 @@ It pins `permissions: contents: read` (it only reads the repo) and reads the
 node version from `.nvmrc` via `setup-node`'s `node-version-file`, so the runtime
 stays consistent with the rest of the setup.
 
-## Pin official actions to the current major
+## Pinning actions
 
-Pin third-party actions to their **current major** (`actions/checkout@v6`), not
-whatever major you remember — older majors run on deprecated runner Node versions
-and draw warnings. The templates here are kept current; when you write a *new*
-workflow, use this table rather than habit:
+Two postures by trust level: **platform-vendor actions** (GitHub, Google,
+HashiCorp, Docker, Microsoft/Azure) ride the **current major tag**;
+**community/third-party actions** must be **SHA-pinned** with the version in a
+trailing comment. The split is a supply-chain stance — vendor orgs are trusted to
+not rewrite a major tag maliciously; a random community action is a risk (see the
+`tj-actions/changed-files` compromise, where a moving tag was repointed to
+credential-stealing code).
 
-| Action | Major |
-| --- | --- |
-| `actions/checkout` | `@v6` |
-| `actions/setup-node` | `@v6` |
-| `actions/setup-python` | `@v6` |
-| `actions/setup-go` | `@v6` |
-| `actions/setup-java` | `@v5` |
-| `actions/cache` | `@v5` |
-| `actions/upload-artifact` | `@v7` |
-| `actions/download-artifact` | `@v8` |
+### Platform vendors → current major tag
+
+Pin to the **current major** (`actions/checkout@v6`), not whatever major you
+remember — older majors run on deprecated runner Node versions and draw warnings.
+When you write a *new* workflow, use this table rather than habit:
+
+| Vendor | Action | Major |
+| --- | --- | --- |
+| GitHub | `actions/checkout` | `@v6` |
+| GitHub | `actions/setup-node` | `@v6` |
+| GitHub | `actions/setup-python` | `@v6` |
+| GitHub | `actions/setup-go` | `@v6` |
+| GitHub | `actions/setup-java` | `@v5` |
+| GitHub | `actions/cache` | `@v5` |
+| GitHub | `actions/upload-artifact` | `@v7` |
+| GitHub | `actions/download-artifact` | `@v8` |
+| GitHub | `actions/github-script` | `@v9` |
+| GitHub | `actions/dependency-review-action` | `@v5` |
+| Google | `google-github-actions/auth` | `@v3` |
+| Google | `google-github-actions/setup-gcloud` | `@v3` |
+| Google | `google-github-actions/deploy-cloudrun` | `@v3` |
+| Google | `googleapis/release-please-action` | `@v5` |
+| HashiCorp | `hashicorp/setup-terraform` | `@v4` |
+| Docker | `docker/login-action` | `@v4` |
+| Docker | `docker/setup-buildx-action` | `@v4` |
+| Docker | `docker/setup-qemu-action` | `@v4` |
+| Docker | `docker/build-push-action` | `@v7` |
+| Microsoft/Azure | `azure/login` | `@v3` |
+| Microsoft/Azure | `Azure/functions-action` | `@v1` |
 
 _Current as of 2026-06-15._ Dependabot's `github-actions` updates (below) keep
 already-pinned refs moving as new majors ship.
+
+> **release-please moved.** `google-github-actions/release-please-action` and
+> `GoogleCloudPlatform/release-please-action` are **deprecated** homes — the
+> maintained action is `googleapis/release-please-action@v5`.
+
+### Community actions → SHA + version comment
+
+Everything outside those vendor orgs (e.g. `peter-evans/*`, `pnpm/action-setup`,
+`codecov/codecov-action`, `aquasecurity/trivy-action`, `nrwl/nx-set-shas`) is
+community-maintained. Pin the **immutable 40-char commit SHA**, and put **the most
+specific version the action publishes** in a trailing comment — full `vX.Y.Z` when
+it tags patch releases, but just the major (`@v2`) when that's all upstream tags.
+The comment documents what the SHA maps to; match upstream's own granularity
+rather than inventing a semver.
+
+```yaml
+- uses: peter-evans/create-pull-request@<40-char-sha> # v6.1.0   # full semver when published
+- uses: some-org/some-action@<40-char-sha>            # v2        # upstream only tags majors
+```
+
+Dependabot bumps the SHA **and** rewrites the comment, so updates stay legible.
+**Never** pin a third-party action to `@main`/`@master` — a moving branch is the
+worst case, executing whatever lands upstream.
 
 ## Conventional commits drive the version
 
@@ -466,7 +511,8 @@ the original author + a link to the upstream repo in the README.
 | Commits | Conventional Commits; `commit-msg` hook (commitlint+husky) + PR lint in CI; `npm run commit` (cz) |
 | CI | `validate.yml`: commitlint (PRs) + typecheck + format-check + build + `git diff --exit-code dist/` |
 | Squash merge | set `squash_merge_commit_title=PR_TITLE`; lint the PR title (`pr-title.yml`) — the squashed subject is what release.yml parses |
-| Action refs | pin official actions to current major (`checkout@v6`, `setup-node@v6`) — see the version table |
+| Action refs (vendor) | platform vendors (GitHub/Google/HashiCorp/Docker/Azure) → current major (`checkout@v6`) — see the table |
+| Action refs (community) | non-vendor actions → SHA pin + `# version` comment (as specific as upstream tags); never `@main` |
 | Deps | Dependabot (`github-actions` + `npm`), conventional-commit messages (`ci(deps)` / `chore(deps)`) |
 | Releasing | `release.yml`: auto on merge to main — bump from commits, changelog, tag `vX.Y.Z` + move `vMAJOR`, GitHub Release |
 | Changelog | generated by `conventional-changelog`; `CHANGELOG.md` in `.prettierignore` |
@@ -497,6 +543,8 @@ the original author + a link to the upstream repo in the README.
 | Relying on the conventional branch commit under squash-merge | Squash ships the PR title — set `squash_merge_commit_title=PR_TITLE` + lint it (`pr-title.yml`) |
 | `conventional-changelog-cli` | Deprecated — use the maintained `conventional-changelog` package |
 | Pinning `actions/checkout@v4` from memory | Use the current major (`@v6`) — see the version table |
+| Tag-pinning a community action (`peter-evans/...@v6`) | SHA-pin it + trailing `# version` comment (vendor orgs may ride major tags; others may not) |
+| Any third-party action on `@main`/`@master` | Moving branch = runs whatever lands upstream — pin a SHA |
 | Dependabot messages like `Bump x` | Set `commit-message.prefix` + `include: scope` so they pass commitlint |
 | Depending on `gts` just for its Prettier preset | Inline the 4-line preset in `.prettierrc.js`; gts's ESLint/inquirer tree brings audit highs |
 | `CHANGELOG.md` not in `.prettierignore` | `format-check` fails after each release — generated file fights Prettier |
