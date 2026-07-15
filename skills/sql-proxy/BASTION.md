@@ -30,6 +30,16 @@ variable "dev_group" {
   description = "Developers allowed to tunnel, e.g. group:bastion-developers@engineering11.com"
 }
 
+variable "boot_image" {
+  type    = string
+  default = "ubuntu-os-cloud/ubuntu-2204-lts"
+}
+
+variable "cloud_sql_proxy_url" {
+  type    = string
+  default = "https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.23.0/cloud-sql-proxy.linux.amd64"
+}
+
 # Default VPC + regional subnet. PSA peering on this VPC gives the bastion a route to the private IP.
 data "google_compute_network" "default" {
   name = "default"
@@ -68,7 +78,7 @@ resource "google_compute_instance" "bastion" {
 
   boot_disk {
     initialize_params {
-      image = "ubuntu-os-cloud/ubuntu-2204-lts"
+      image = var.boot_image
       size  = 20
     }
   }
@@ -80,8 +90,17 @@ resource "google_compute_instance" "bastion" {
   }
 
   service_account {
-    email  = data.google_compute_default_service_account.default.email
-    scopes = ["cloud-platform"]
+    email = data.google_compute_default_service_account.default.email
+    # Standard default GCE access scopes. The proxy authenticates as the developer's ADC, so the SA's
+    # own token/scopes aren't load-bearing for the DB — these just cover logging/monitoring/etc.
+    scopes = [
+      "https://www.googleapis.com/auth/devstorage.read_only",
+      "https://www.googleapis.com/auth/logging.write",
+      "https://www.googleapis.com/auth/monitoring.write",
+      "https://www.googleapis.com/auth/service.management.readonly",
+      "https://www.googleapis.com/auth/servicecontrol",
+      "https://www.googleapis.com/auth/trace.append",
+    ]
   }
 
   metadata = {
@@ -99,7 +118,7 @@ resource "google_compute_instance" "bastion" {
             AllowStreamLocalForwarding yes
       runcmd:
         # Install the Cloud SQL Auth Proxy v2 into the OS. (gcloud ships on GCE's Ubuntu/Debian images.)
-        - curl -fsSL -o /usr/local/bin/cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.23.0/cloud-sql-proxy.linux.amd64
+        - curl -fsSL -o /usr/local/bin/cloud-sql-proxy ${var.cloud_sql_proxy_url}
         - chmod +x /usr/local/bin/cloud-sql-proxy
         - systemctl reload ssh || systemctl reload sshd || true
     EOT
