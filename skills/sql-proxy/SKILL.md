@@ -63,7 +63,7 @@ overwriting a remembered value with a different one.
 - Parse `project:region:instance` from `--instance`. `bastion_project` defaults to that project.
 - **Zone** defaults to `${REGION}-a` — tell the user they can pin it with `--zone`.
 - **Bastion**: if `--bastion` not given, discover it —
-  `gcloud compute instances list --project <bastion_project> --filter="labels.bastion=true AND zone:( ${REGION}-a )" --format="value(name,zone)"`, take the first. If none in `${REGION}-a`, list the region's zones (`gcloud compute zones list --filter="region:( <region> )"`) and query each until a labeled VM appears. If still none, stop and ask the user to re-run with `--bastion NAME --zone ZONE --bastion-project PROJECT_ID`.
+  `gcloud compute instances list --project <bastion_project> --filter="labels.bastion=sql AND zone:( ${REGION}-a )" --format="value(name,zone)"`, take the first. If none in `${REGION}-a`, list the region's zones (`gcloud compute zones list --filter="region:( <region> )"`) and query each until a labeled VM appears. If still none, stop and ask the user to re-run with `--bastion NAME --zone ZONE --bastion-project PROJECT_ID`.
 - **Local port** defaults to `5432`; say it's overridable with `--local-port`. On a bind conflict, run `lsof -Pni :<port>` to show what holds it, then have the user re-run with `--local-port PORT`.
 
 ## Procedure

@@ -73,7 +73,9 @@ resource "google_compute_instance" "bastion" {
   zone         = var.zone
   machine_type = "e2-small" # modest: 2 shared vCPU / 2 GB — fine for a few per-dev proxies
 
-  labels = { bastion = "true" } # /sql-proxy discovers the bastion by labels.bastion=true
+  deletion_protection = true # guard against accidental delete
+
+  labels = { bastion = "sql" } # /sql-proxy discovers the bastion by labels.bastion=sql
   tags   = ["bastion"]          # matches the IAP-SSH firewall rule above
 
   boot_disk {
@@ -122,6 +124,14 @@ resource "google_compute_instance" "bastion" {
         - chmod +x /usr/local/bin/cloud-sql-proxy
         - systemctl reload ssh || systemctl reload sshd || true
     EOT
+  }
+
+  # Keep it up without a MIG: restart after crashes/host failures, live-migrate through maintenance,
+  # and never use spot (spot gets terminated and won't auto-restart).
+  scheduling {
+    provisioning_model  = "STANDARD"
+    automatic_restart   = true
+    on_host_maintenance = "MIGRATE"
   }
 
   shielded_instance_config {
@@ -176,3 +186,7 @@ resource "google_project_iam_member" "devs_oslogin" {
   Drop to `e2-micro` for very light use; bump up if many devs connect at once.
 - **Region/zone:** put the bastion in the instance's region; `/sql-proxy` defaults the zone to
   `${region}-a` (overridable with `--zone`).
+- **Always-on without a MIG:** the `scheduling` block + `deletion_protection` keep this single VM up
+  through crashes, host maintenance, and accidental deletes — no managed instance group or autoscaler
+  needed. A MIG would add auto-recreate/autoheal, but replacing the instance wipes the per-developer
+  creds-at-rest (each dev's ADC on disk), so a plain VM is the better fit here.
