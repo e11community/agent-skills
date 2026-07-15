@@ -11,6 +11,8 @@ with an **auto-refreshing** token. Background lives in the engineering11 repo:
 [Postgres-at-GCP findings](https://github.com/engineering11/engineering11/blob/main/architecture/postgres-gcp/README.md)
 and the [developer guide](https://github.com/engineering11/engineering11/blob/main/architecture/postgres-gcp/DEVELOPERS.md).
 
+**Prerequisite:** an IAP bastion VM — provision one with [BASTION.md](./BASTION.md).
+
 ## Invariants (never trade these away)
 
 - **One proxy per developer**, never a single shared proxy — each dev's own identity + own auto-refresh
