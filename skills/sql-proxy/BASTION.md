@@ -25,9 +25,9 @@ variable "zone" {
   default = "us-central1-a" # /sql-proxy assumes ${region}-a by default
 }
 
-variable "dev_group" {
-  type        = string
-  description = "Developers allowed to tunnel, e.g. group:bastion-developers@engineering11.com"
+variable "bastion_iam_groups" {
+  type        = list(string)
+  description = "IAM groups allowed to tunnel, e.g. [\"group:bastion-developers@engineering11.com\"]"
 }
 
 variable "boot_image" {
@@ -136,23 +136,26 @@ resource "google_compute_instance" "bastion" {
 # OS Login SSH to a VM with an attached SA requires "act as" on that SA. Easy to miss; SSH fails
 # without it.
 resource "google_service_account_iam_member" "devs_actas_bastion_sa" {
+  for_each           = toset(var.bastion_iam_groups)
   service_account_id = data.google_compute_default_service_account.default.name
   role               = "roles/iam.serviceAccountUser"
-  member             = var.dev_group
+  member             = each.value
 }
 
 # Open the IAP tunnel to the VM.
 resource "google_project_iam_member" "devs_iap" {
-  project = var.project_id
-  role    = "roles/iap.tunnelResourceAccessor"
-  member  = var.dev_group
+  for_each = toset(var.bastion_iam_groups)
+  project  = var.project_id
+  role     = "roles/iap.tunnelResourceAccessor"
+  member   = each.value
 }
 
 # Log in over OS Login.
 resource "google_project_iam_member" "devs_oslogin" {
-  project = var.project_id
-  role    = "roles/compute.osLogin"
-  member  = var.dev_group
+  for_each = toset(var.bastion_iam_groups)
+  project  = var.project_id
+  role     = "roles/compute.osLogin"
+  member   = each.value
 }
 ```
 
