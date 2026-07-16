@@ -8,6 +8,15 @@ Assumes Private Service Access (the Cloud SQL private-IP peering) lives on the *
 e11 convention). Because PSA peering is a property of the VPC, any subnet in it — including the bastion's
 — reaches the instance's private IP over the auto-imported peering route, with no extra config.
 
+**Networking is assumed to be provisioned elsewhere.** This doc does **not** set up VPC routing, Cloud
+NAT, or egress to Google APIs — that is the responsibility of your infrastructure setup. The bastion has
+no external IP, so it depends on that infrastructure for outbound reach to `sqladmin.googleapis.com`,
+`oauth2.googleapis.com`, and `storage.googleapis.com` (the Cloud SQL Auth Proxy's metadata/token calls
+and the boot-time binary download). Without it, the proxy can't start and cloud-init can't install it.
+**The one networking prerequisite called out here is PSA** (above) — the DB's private-IP peering. Note
+that egress NAT and the PSA peering are independent paths: NAT (for `*.googleapis.com`) never intercepts
+traffic to the DB's private IP, which always flows over the more-specific PSA peering route.
+
 ## Terraform
 
 ```hcl

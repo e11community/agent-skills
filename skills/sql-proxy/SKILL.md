@@ -89,9 +89,15 @@ act between its prompts:
 1. `BASTION=<b> ZONE=<z> PROJECT_ID=<p> scripts/login-helper.sh` → it starts
    `gcloud auth application-default login --no-browser` on the bastion and prints `BOOTSTRAP_CMD=<…>`
    and `RESP_FILE=<path>`.
-2. Run `BOOTSTRAP_CMD` **locally** (you run it): the local gcloud auto-launches the browser — guide the
-   user through Google login/MFA/consent. The command then prints a verification code.
-3. Write that code to `RESP_FILE`. The helper relays it to the bastion and prints `ADC_LOGIN_DONE`.
+2. Run `BOOTSTRAP_CMD` **locally** (you run it), piping `y` to clear its `Proceed (y/N)?` safety prompt
+   and capturing output: `printf 'y\n' | <BOOTSTRAP_CMD> >out.txt 2>&1`. The local gcloud opens the
+   browser — guide the user through Google login/MFA/consent. It then **auto-captures the redirect** (via
+   a `localhost:<port>` server) and, under "Copy the following line back…", prints a line beginning
+   `https://localhost:<port>/?state=…&code=…`. It does **not** print a short "verification code" — do not
+   grep/wait for that wording.
+3. Extract that line — `grep -oE 'https://localhost:[0-9]+/\?state=[^ ]+' out.txt` — and write it to
+   `RESP_FILE`. The helper relays it to the bastion and prints `ADC_LOGIN_DONE`. Key your wait on that URL
+   line (or the local command's completion notification), **not** a fixed `sleep` budget.
 
 **Existing ADC** is handled by only entering this flow when the probe says `ADC_INVALID`. **Repair on
 expiry/revoke:** if the proxy later can't refresh (revoked token or a reauth policy fired), the health

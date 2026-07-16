@@ -7,7 +7,7 @@
 # The agent orchestrates:
 #   1. Run this. It prints  BOOTSTRAP_CMD=<gcloud … --remote-bootstrap="…">  and  RESP_FILE=<path>.
 #   2. Run BOOTSTRAP_CMD locally — the local gcloud opens the browser; the user authenticates; the
-#      command prints a verification code.
+#      command prints the remote-bootstrap response line (https://localhost:<port>/?state=…&code=…).
 #   3. Write that code into RESP_FILE. This script relays it to the bastion and prints ADC_LOGIN_DONE.
 set -uo pipefail
 
@@ -19,12 +19,22 @@ WORK="$(mktemp -d)"
 FIFO="$WORK/in"; OUT="$WORK/out"; RESP_FILE="$WORK/response"
 mkfifo "$FIFO"
 
-# Hold the FIFO open for writing so the remote login's stdin doesn't hit EOF before we send the code.
-exec 3>"$FIFO"
+# Hold the FIFO open (read-write, so the open never blocks on a not-yet-present reader) so the remote
+# login's stdin doesn't hit EOF before we send the code.
+exec 3<>"$FIFO"
 
 gcloud compute ssh "$BASTION" --zone "$ZONE" --project "$PROJECT_ID" --tunnel-through-iap \
   -- gcloud auth application-default login --no-browser <"$FIFO" >"$OUT" 2>&1 &
 SSH_PID=$!
+
+# On a GCE VM, `gcloud auth application-default login` first prompts to confirm using a personal
+# account ("Do you want to continue (Y/n)?"). Answer it — only if it appears, so this stays correct on
+# non-GCE hosts — so the --no-browser handshake can proceed to print the bootstrap command.
+for _ in $(seq 1 15); do
+  grep -q 'Do you want to continue' "$OUT" 2>/dev/null && { printf 'Y\n' >&3; break; }
+  grep -q -- '--remote-bootstrap=' "$OUT" 2>/dev/null && break
+  sleep 1
+done
 
 # Wait for the bootstrap command the bastion prints for us to run locally.
 for _ in $(seq 1 60); do grep -q -- '--remote-bootstrap=' "$OUT" 2>/dev/null && break; sleep 1; done
@@ -38,10 +48,10 @@ fi
 echo "BOOTSTRAP_CMD=${BOOTSTRAP_CMD}"
 echo "RESP_FILE=${RESP_FILE}"
 
-# Wait (up to 5 min) for the agent to run BOOTSTRAP_CMD locally and drop the verification code here.
+# Wait (up to 5 min) for the agent to run BOOTSTRAP_CMD locally and drop the remote-bootstrap response line here.
 for _ in $(seq 1 300); do [ -s "$RESP_FILE" ] && break; sleep 1; done
 if [ ! -s "$RESP_FILE" ]; then
-  echo "ERROR: no verification code written to RESP_FILE in time" >&2
+  echo "ERROR: no remote-bootstrap response line written to RESP_FILE in time" >&2
   kill "$SSH_PID" 2>/dev/null || true
   exit 1
 fi
