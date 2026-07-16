@@ -166,31 +166,31 @@ credential-stealing code).
 
 Pin to the **current major** (`actions/checkout@v6`), not whatever major you
 remember — older majors run on deprecated runner Node versions and draw warnings.
-When you write a *new* workflow, use this table rather than habit:
+When you write a _new_ workflow, use this table rather than habit:
 
-| Vendor | Action | Major |
-| --- | --- | --- |
-| GitHub | `actions/checkout` | `@v6` |
-| GitHub | `actions/setup-node` | `@v6` |
-| GitHub | `actions/setup-python` | `@v6` |
-| GitHub | `actions/setup-go` | `@v6` |
-| GitHub | `actions/setup-java` | `@v5` |
-| GitHub | `actions/cache` | `@v5` |
-| GitHub | `actions/upload-artifact` | `@v7` |
-| GitHub | `actions/download-artifact` | `@v8` |
-| GitHub | `actions/github-script` | `@v9` |
-| GitHub | `actions/dependency-review-action` | `@v5` |
-| Google | `google-github-actions/auth` | `@v3` |
-| Google | `google-github-actions/setup-gcloud` | `@v3` |
-| Google | `google-github-actions/deploy-cloudrun` | `@v3` |
-| Google | `googleapis/release-please-action` | `@v5` |
-| HashiCorp | `hashicorp/setup-terraform` | `@v4` |
-| Docker | `docker/login-action` | `@v4` |
-| Docker | `docker/setup-buildx-action` | `@v4` |
-| Docker | `docker/setup-qemu-action` | `@v4` |
-| Docker | `docker/build-push-action` | `@v7` |
-| Microsoft/Azure | `azure/login` | `@v3` |
-| Microsoft/Azure | `Azure/functions-action` | `@v1` |
+| Vendor          | Action                                  | Major |
+| --------------- | --------------------------------------- | ----- |
+| GitHub          | `actions/checkout`                      | `@v6` |
+| GitHub          | `actions/setup-node`                    | `@v6` |
+| GitHub          | `actions/setup-python`                  | `@v6` |
+| GitHub          | `actions/setup-go`                      | `@v6` |
+| GitHub          | `actions/setup-java`                    | `@v5` |
+| GitHub          | `actions/cache`                         | `@v5` |
+| GitHub          | `actions/upload-artifact`               | `@v7` |
+| GitHub          | `actions/download-artifact`             | `@v8` |
+| GitHub          | `actions/github-script`                 | `@v9` |
+| GitHub          | `actions/dependency-review-action`      | `@v5` |
+| Google          | `google-github-actions/auth`            | `@v3` |
+| Google          | `google-github-actions/setup-gcloud`    | `@v3` |
+| Google          | `google-github-actions/deploy-cloudrun` | `@v3` |
+| Google          | `googleapis/release-please-action`      | `@v5` |
+| HashiCorp       | `hashicorp/setup-terraform`             | `@v4` |
+| Docker          | `docker/login-action`                   | `@v4` |
+| Docker          | `docker/setup-buildx-action`            | `@v4` |
+| Docker          | `docker/setup-qemu-action`              | `@v4` |
+| Docker          | `docker/build-push-action`              | `@v7` |
+| Microsoft/Azure | `azure/login`                           | `@v3` |
+| Microsoft/Azure | `Azure/functions-action`                | `@v1` |
 
 _Current as of 2026-06-15._ Dependabot's `github-actions` updates (below) keep
 already-pinned refs moving as new majors ship.
@@ -211,12 +211,17 @@ rather than inventing a semver.
 
 ```yaml
 - uses: peter-evans/create-pull-request@<40-char-sha> # v6.1.0   # full semver when published
-- uses: some-org/some-action@<40-char-sha>            # v2        # upstream only tags majors
+- uses: some-org/some-action@<40-char-sha> # v2        # upstream only tags majors
 ```
 
 Dependabot bumps the SHA **and** rewrites the comment, so updates stay legible.
 **Never** pin a third-party action to `@main`/`@master` — a moving branch is the
 worst case, executing whatever lands upstream.
+
+| Action             | Version | SHA                                      |
+| ------------------ | ------- | ---------------------------------------- |
+| dorny/paths-filter | 4.0.1   | fbd0ab8f3e69293af611ebaee6363fc25e6d187d |
+| nick-fields/try    | 4.0.0   | ad984534de44a9489a53aefd81eb77f87c70dc60 |
 
 ## Conventional commits drive the version
 
@@ -235,26 +240,26 @@ runs Prettier on staged files pre-commit. Add to `package.json`:
 ```jsonc
 {
   "scripts": {
-    "commit": "cz",      // interactive Conventional-Commit authoring
-    "prepare": "husky"   // installs the git hooks on `npm install`
+    "commit": "cz", // interactive Conventional-Commit authoring
+    "prepare": "husky", // installs the git hooks on `npm install`
   },
-  "config": {"commitizen": {"path": "cz-conventional-changelog"}},
-  "lint-staged": {"*": "prettier --ignore-unknown --write"},
+  "config": { "commitizen": { "path": "cz-conventional-changelog" } },
+  "lint-staged": { "*": "prettier --ignore-unknown --write" },
   "devDependencies": {
     "@commitlint/cli": "^21",
     "@commitlint/config-conventional": "^21",
     "commitizen": "^4",
     "cz-conventional-changelog": "^3",
     "husky": "^9",
-    "lint-staged": "^16"
-  }
+    "lint-staged": "^16",
+  },
 }
 ```
 
 `commitlint.config.js` (copy [`templates/commitlint.config.js`](templates/commitlint.config.js)):
 
 ```js
-module.exports = {extends: ['@commitlint/config-conventional']}
+module.exports = { extends: ['@commitlint/config-conventional'] }
 ```
 
 Hooks are husky v9 — a plain command, no legacy `#!/usr/bin/env sh` + source boilerplate.
@@ -290,7 +295,7 @@ Three things that make this robust:
 
 - **No release loop.** The release commit is a non-releasable `chore(release)` **and** carries
   `[skip ci]`, so the push it makes can't trigger another run.
-- **Folded major-tag move.** The `vMAJOR` move lives *inside* this workflow, not a separate
+- **Folded major-tag move.** The `vMAJOR` move lives _inside_ this workflow, not a separate
   tag-triggered one — a `GITHUB_TOKEN`-created tag does **not** cascade to trigger other
   workflows, so a standalone tag-triggered mover would silently never fire.
 - **`package.json` version stays honest.** Callers pin tags, not npm, so the version is
@@ -331,7 +336,7 @@ the **PR title** does. Two pieces make it deterministic:
 
 The workflow pushes with the built-in `GITHUB_TOKEN` (`permissions: contents: write`). That's
 enough while `main` is unprotected **or** only blocks deletion + force-push — the release commit
-is a plain fast-forward (no branch force-push; the only `-f` is on the `vMAJOR` *tag*, which
+is a plain fast-forward (no branch force-push; the only `-f` is on the `vMAJOR` _tag_, which
 branch rules don't govern). It breaks only if you **require pull requests** (or status checks /
 signed commits) on `main`; then add the `github-actions` bot to the ruleset bypass list or use a
 GitHub App token. [`templates/ADMIN.md`](templates/ADMIN.md) → `docs/ADMIN.md` has a `gh` script
@@ -345,15 +350,15 @@ Two ecosystems: `github-actions` (the `@v6`-style refs in workflows) and `npm`.
 
 The one subtlety that makes this skill-specific: **make Dependabot's commit
 messages Conventional-Commit-shaped**, or they fail `commitlint` and confuse the
-release bump engine. Set `commit-message.prefix` to a *non-releasing* type
+release bump engine. Set `commit-message.prefix` to a _non-releasing_ type
 (`ci` for actions, `chore` for npm) with `include: scope` so messages read
 `ci(deps): …` / `chore(deps): …` — well-formed, and they don't auto-cut a release
 on their own (correct: a dep bump shouldn't surprise-release).
 
 ```yaml
 commit-message:
-  prefix: chore        # ci(deps): … for the github-actions ecosystem
-  include: scope       # appends the (deps) / (deps-dev) scope
+  prefix: chore # ci(deps): … for the github-actions ecosystem
+  include: scope # appends the (deps) / (deps-dev) scope
 ```
 
 **dist caveat:** a bump to a **bundled runtime** dependency (`@actions/*`, etc.)
@@ -388,21 +393,21 @@ Patterns that bite people, with fixes:
 - **Accept base64-or-raw** for JSON keys (CI secret stores often hold base64).
 
 ```typescript
-import {writeFileSync} from 'node:fs'
-import {tmpdir} from 'node:os'
-import {join} from 'node:path'
-import {getInput, info, setSecret, exportVariable} from '@actions/core'
+import { writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { getInput, info, setSecret, exportVariable } from '@actions/core'
 
 const BASE64 = /^([0-9a-zA-Z+/]{4})*(([0-9a-zA-Z+/]{2}==)|([0-9a-zA-Z+/]{3}=))?$/
 
 export const login = async () => {
   let key = getInput('gcp_sa_key')
   if (!key) throw new Error('gcp_sa_key is required')
-  setSecret(key)                                   // mask the value, not the name
+  setSecret(key) // mask the value, not the name
 
   if (BASE64.test(key)) {
     key = Buffer.from(key, 'base64').toString('utf8')
-    setSecret(key)                                 // mask the decoded form too
+    setSecret(key) // mask the decoded form too
   }
 
   const keyPath = join(process.env.RUNNER_TEMP || tmpdir(), 'gcp_key.json')
@@ -435,7 +440,7 @@ Don't silently break consumers. When removing/discouraging an input, keep
 honoring it for now but warn at runtime and label it in `action.yml`:
 
 ```typescript
-import {warning} from '@actions/core'
+import { warning } from '@actions/core'
 if (getInput('project_id')) {
   warning('`project_id` is deprecated and will be removed in a future release. Prefer `--project`.')
 }
@@ -457,7 +462,7 @@ consumed by git ref (`owner/action@v2` / `@main`), so move the major tag.
 House style is gts's Prettier preset with two overrides — but **inline it; don't
 depend on gts for it.** `gts` exists to be a full lint/format toolchain (ESLint +
 its own `tsconfig`); a bundled esbuild action uses neither (esbuild compiles,
-`tsc --noEmit` type-checks). Pulling `gts` in *only* for `require('gts/.prettierrc.json')`
+`tsc --noEmit` type-checks). Pulling `gts` in _only_ for `require('gts/.prettierrc.json')`
 drags its entire ESLint + inquirer tree into `devDependencies` — which is a
 recurring source of npm-audit highs (e.g. `minimatch`, and `tmp`, which has had no
 upstream fix) for a four-line config you can paste. So write the preset directly:
@@ -501,50 +506,50 @@ the original author + a link to the upstream repo in the README.
 
 ## Quick Reference
 
-| Concern | Convention |
-| --- | --- |
-| Bundler | esbuild → `dist/action.js`, `--bundle --platform=node --format=cjs --minify` |
-| Type safety | `tsc --noEmit` (esbuild does not type-check) |
-| Module resolution | `"bundler"` (clean extensionless imports), `module: esnext` |
-| Runtime | `node24` across `action.yml`, `.nvmrc`, `@types/node`, esbuild target |
-| dist | committed; rebuild after every `src/` change; `linguist-generated` |
-| Commits | Conventional Commits; `commit-msg` hook (commitlint+husky) + PR lint in CI; `npm run commit` (cz) |
-| CI | `validate.yml`: commitlint (PRs) + typecheck + format-check + build + `git diff --exit-code dist/` |
-| Squash merge | set `squash_merge_commit_title=PR_TITLE`; lint the PR title (`pr-title.yml`) — the squashed subject is what release.yml parses |
-| Action refs (vendor) | platform vendors (GitHub/Google/HashiCorp/Docker/Azure) → current major (`checkout@v6`) — see the table |
-| Action refs (community) | non-vendor actions → SHA pin + `# version` comment (as specific as upstream tags); never `@main` |
-| Deps | Dependabot (`github-actions` + `npm`), conventional-commit messages (`ci(deps)` / `chore(deps)`) |
-| Releasing | `release.yml`: auto on merge to main — bump from commits, changelog, tag `vX.Y.Z` + move `vMAJOR`, GitHub Release |
-| Changelog | generated by `conventional-changelog`; `CHANGELOG.md` in `.prettierignore` |
-| Secret files | `RUNNER_TEMP`, never `/opt` |
-| Masking | `setSecret(value)` — value not name; raw + decoded |
-| exec | args array + `{cwd}`, never `cd` or string interpolation |
-| CLI flags | non-interactive (no `--add`-style prompts) |
-| Errors | `setFailed(err instanceof Error ? err.message : JSON.stringify(err))` |
-| Deprecation | `warning()` at runtime + `Deprecated` in `action.yml` |
+| Concern                 | Convention                                                                                                                     |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Bundler                 | esbuild → `dist/action.js`, `--bundle --platform=node --format=cjs --minify`                                                   |
+| Type safety             | `tsc --noEmit` (esbuild does not type-check)                                                                                   |
+| Module resolution       | `"bundler"` (clean extensionless imports), `module: esnext`                                                                    |
+| Runtime                 | `node24` across `action.yml`, `.nvmrc`, `@types/node`, esbuild target                                                          |
+| dist                    | committed; rebuild after every `src/` change; `linguist-generated`                                                             |
+| Commits                 | Conventional Commits; `commit-msg` hook (commitlint+husky) + PR lint in CI; `npm run commit` (cz)                              |
+| CI                      | `validate.yml`: commitlint (PRs) + typecheck + format-check + build + `git diff --exit-code dist/`                             |
+| Squash merge            | set `squash_merge_commit_title=PR_TITLE`; lint the PR title (`pr-title.yml`) — the squashed subject is what release.yml parses |
+| Action refs (vendor)    | platform vendors (GitHub/Google/HashiCorp/Docker/Azure) → current major (`checkout@v6`) — see the table                        |
+| Action refs (community) | non-vendor actions → SHA pin + `# version` comment (as specific as upstream tags); never `@main`                               |
+| Deps                    | Dependabot (`github-actions` + `npm`), conventional-commit messages (`ci(deps)` / `chore(deps)`)                               |
+| Releasing               | `release.yml`: auto on merge to main — bump from commits, changelog, tag `vX.Y.Z` + move `vMAJOR`, GitHub Release              |
+| Changelog               | generated by `conventional-changelog`; `CHANGELOG.md` in `.prettierignore`                                                     |
+| Secret files            | `RUNNER_TEMP`, never `/opt`                                                                                                    |
+| Masking                 | `setSecret(value)` — value not name; raw + decoded                                                                             |
+| exec                    | args array + `{cwd}`, never `cd` or string interpolation                                                                       |
+| CLI flags               | non-interactive (no `--add`-style prompts)                                                                                     |
+| Errors                  | `setFailed(err instanceof Error ? err.message : JSON.stringify(err))`                                                          |
+| Deprecation             | `warning()` at runtime + `Deprecated` in `action.yml`                                                                          |
 
 ## Common Mistakes
 
-| Mistake | Fix |
-| --- | --- |
-| Forgetting to rebuild/commit `dist/` | Action runs stale code; always `npm run build` + commit after `src/` edits |
-| `nodenext` resolution → `.js` import extensions | Use `moduleResolution: "bundler"` |
-| Letting tsc emit JS alongside esbuild | `--noEmit`; esbuild owns the artifact |
-| `setSecret('input_name')` | Mask the value: `setSecret(getInput('x'))` |
-| Writing keys to `/opt/...` | `join(process.env.RUNNER_TEMP || tmpdir(), ...)` |
-| `exec('cd path')` then run | Pass `{cwd: path}` to `exec` |
-| `exec(\`tool ${userInput}\`)` | `exec('tool', [userInput])` |
-| Interactive CLI flow in CI (`firebase use --add`) | Non-interactive form (`firebase use <id>` / `--project`) |
-| `setFailed(JSON.stringify(error))` | `setFailed(error.message)` |
-| Dangling `post-if:` with no `post:` | Remove it |
-| Removing an input without a major bump | Breaking change — use `feat!:` / `BREAKING CHANGE:` so the release auto-bumps major |
-| Release commit lacks `chore`/`[skip ci]` | Infinite release loop — the release push retriggers the workflow |
-| Separate tag-triggered major-tag mover | A `GITHUB_TOKEN`-pushed tag won't trigger it — fold the `vMAJOR` move into the release job |
+| Mistake                                                      | Fix                                                                                             |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- | --- | --------------- |
+| Forgetting to rebuild/commit `dist/`                         | Action runs stale code; always `npm run build` + commit after `src/` edits                      |
+| `nodenext` resolution → `.js` import extensions              | Use `moduleResolution: "bundler"`                                                               |
+| Letting tsc emit JS alongside esbuild                        | `--noEmit`; esbuild owns the artifact                                                           |
+| `setSecret('input_name')`                                    | Mask the value: `setSecret(getInput('x'))`                                                      |
+| Writing keys to `/opt/...`                                   | `join(process.env.RUNNER_TEMP                                                                   |     | tmpdir(), ...)` |
+| `exec('cd path')` then run                                   | Pass `{cwd: path}` to `exec`                                                                    |
+| `exec(\`tool ${userInput}\`)`                                | `exec('tool', [userInput])`                                                                     |
+| Interactive CLI flow in CI (`firebase use --add`)            | Non-interactive form (`firebase use <id>` / `--project`)                                        |
+| `setFailed(JSON.stringify(error))`                           | `setFailed(error.message)`                                                                      |
+| Dangling `post-if:` with no `post:`                          | Remove it                                                                                       |
+| Removing an input without a major bump                       | Breaking change — use `feat!:` / `BREAKING CHANGE:` so the release auto-bumps major             |
+| Release commit lacks `chore`/`[skip ci]`                     | Infinite release loop — the release push retriggers the workflow                                |
+| Separate tag-triggered major-tag mover                       | A `GITHUB_TOKEN`-pushed tag won't trigger it — fold the `vMAJOR` move into the release job      |
 | Relying on the conventional branch commit under squash-merge | Squash ships the PR title — set `squash_merge_commit_title=PR_TITLE` + lint it (`pr-title.yml`) |
-| `conventional-changelog-cli` | Deprecated — use the maintained `conventional-changelog` package |
-| Pinning `actions/checkout@v4` from memory | Use the current major (`@v6`) — see the version table |
-| Tag-pinning a community action (`peter-evans/...@v6`) | SHA-pin it + trailing `# version` comment (vendor orgs may ride major tags; others may not) |
-| Any third-party action on `@main`/`@master` | Moving branch = runs whatever lands upstream — pin a SHA |
-| Dependabot messages like `Bump x` | Set `commit-message.prefix` + `include: scope` so they pass commitlint |
-| Depending on `gts` just for its Prettier preset | Inline the 4-line preset in `.prettierrc.js`; gts's ESLint/inquirer tree brings audit highs |
-| `CHANGELOG.md` not in `.prettierignore` | `format-check` fails after each release — generated file fights Prettier |
+| `conventional-changelog-cli`                                 | Deprecated — use the maintained `conventional-changelog` package                                |
+| Pinning `actions/checkout@v4` from memory                    | Use the current major (`@v6`) — see the version table                                           |
+| Tag-pinning a community action (`peter-evans/...@v6`)        | SHA-pin it + trailing `# version` comment (vendor orgs may ride major tags; others may not)     |
+| Any third-party action on `@main`/`@master`                  | Moving branch = runs whatever lands upstream — pin a SHA                                        |
+| Dependabot messages like `Bump x`                            | Set `commit-message.prefix` + `include: scope` so they pass commitlint                          |
+| Depending on `gts` just for its Prettier preset              | Inline the 4-line preset in `.prettierrc.js`; gts's ESLint/inquirer tree brings audit highs     |
+| `CHANGELOG.md` not in `.prettierignore`                      | `format-check` fails after each release — generated file fights Prettier                        |
