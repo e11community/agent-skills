@@ -1,0 +1,43 @@
+{
+  "title": "Example — Create honors an explicit id",
+  "slug": "example-review",
+  "branch": "topic/example",
+  "range": "HEAD",
+  "heroDesc": "A tiny two-file change, shown as a worked example of the review.json shape. Read the capability, then the one high-risk card.",
+  "cap": "<div class=\"cap-label\">The new capability, in brief</div><p><code>POST /users</code> now honors a client-supplied <code>id</code> instead of always minting one, so a caller can create a user with a known id.</p>",
+  "callout": "<b>Where to spend your attention.</b> One question decides this change: is exposing a client-supplied <code>id</code> on the public create endpoint acceptable, or should it be constrained to the principal id?<br><br><b>Not shown here:</b> the generated OpenAPI snapshot.",
+  "features": {
+    "order": ["create"],
+    "meta": { "create": { "name": "User creation", "desc": "The POST /users path" } }
+  },
+  "files": [
+    {
+      "path": "src/http/schemas.ts",
+      "risk": "high",
+      "cat": "logic",
+      "catLabel": "Logic · API",
+      "title": "Create honors an explicit id (the 409 root cause)",
+      "pkg": "v2-user-rest",
+      "feature": "create",
+      "why": "The schema silently dropped a client-supplied `id`, so a second create attempt 409'd on email. The core already honored `input.id ?? randomUUID()`; this just exposes it, matching the documented `NewUser` contract.",
+      "points": [
+        "Is exposing client-supplied `id` on the public create endpoint acceptable, or should it be constrained (e.g. only equal to the principal id)?",
+        "Needs a follow-up integration spec: \"create honors an explicit id\" (endpoint-coverage rule)."
+      ],
+      "diffText": "diff --git a/src/http/schemas.ts b/src/http/schemas.ts\n--- a/src/http/schemas.ts\n+++ b/src/http/schemas.ts\n@@ -37,6 +37,7 @@ import { z } from 'zod'\n export const NewUserSchema = z.object({\n+  id: z.string().optional().openapi({ example: 'dev-admin' }),\n   email: z.string().email(),\n   displayName: z.string(),\n })"
+    },
+    {
+      "path": "src/http/router.ts",
+      "risk": "med",
+      "cat": "wiring",
+      "title": "POST /users passes id through to the service",
+      "pkg": "v2-user-rest",
+      "feature": "create",
+      "why": "Threads the now-optional `id` from the validated body into `createUser`. Behavior is unchanged when `id` is absent.",
+      "points": [
+        "Confirm the cast `input.id as UserId | undefined` is the only place the raw string becomes a branded id."
+      ],
+      "diffText": "diff --git a/src/http/router.ts b/src/http/router.ts\n--- a/src/http/router.ts\n+++ b/src/http/router.ts\n@@ -64,7 +64,8 @@ app.openapi(createUserRoute, async (c) => {\n-  return c.json(toDto(await userService.createUser(c.req.valid('json'))), 201)\n+  const input = c.req.valid('json')\n+  return c.json(toDto(await userService.createUser({ ...input, id: input.id as UserId | undefined })), 201)\n })"
+    }
+  ]
+}
