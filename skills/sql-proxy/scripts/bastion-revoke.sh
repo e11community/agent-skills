@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # Runs ON the bastion (piped via `gcloud compute ssh … -- bash -s < bastion-revoke.sh`). Best-effort
-# teardown of THIS user's Cloud SQL access: stop this user's proxy, revoke their long-lived creds
+# teardown of THIS user's Cloud SQL access: stop this user's proxy (confirming it actually exits,
+# escalating to SIGKILL if needed — same as bastion-stop-proxy.sh), revoke their long-lived creds
 # (gcloud account + ADC), and remove their socket. Never hard-fails — each step is independent, so a
 # failure just prints a warning and the rest still runs.
 #
@@ -9,9 +10,28 @@
 # to run on a bastion shared by other developers.
 set -uo pipefail
 me="$(id -un)"
+TIMEOUT="${TIMEOUT:-30}"
 
-pkill -u "$me" -f cloud-sql-proxy 2>/dev/null && echo "stopped cloud-sql-proxy" \
-  || echo "WARN: no cloud-sql-proxy running for ${me} (or could not stop it)"
+if pgrep -u "$me" -f cloud-sql-proxy >/dev/null 2>&1; then
+  pkill -u "$me" -f cloud-sql-proxy 2>/dev/null || true
+  waited=0
+  while pgrep -u "$me" -f cloud-sql-proxy >/dev/null 2>&1; do
+    if [ "$waited" -ge "$TIMEOUT" ]; then
+      pkill -9 -u "$me" -f cloud-sql-proxy 2>/dev/null || true
+      sleep 1
+      break
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  if pgrep -u "$me" -f cloud-sql-proxy >/dev/null 2>&1; then
+    echo "WARN: cloud-sql-proxy for ${me} did not stop within ${TIMEOUT}s"
+  else
+    echo "stopped cloud-sql-proxy"
+  fi
+else
+  echo "WARN: no cloud-sql-proxy running for ${me}"
+fi
 
 gcloud auth application-default revoke --quiet 2>/dev/null && echo "revoked ADC" \
   || echo "WARN: no ADC to revoke (or revoke failed)"

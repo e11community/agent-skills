@@ -30,8 +30,10 @@ and the [developer guide](https://github.com/engineering11/engineering11/blob/ma
 - **Overrides (any run)**: `--iam-user`, `--instance` (full `project:region:instance`) or the pieces
   `--project` / `--region` / `--instance-name`; plus `--bastion NAME`, `--zone ZONE`,
   `--bastion-project PROJECT_ID`, `--local-port PORT`. A provided value skips its question.
-- **Teardown modes**: `/sql-proxy --stop` (local tunnel cleanup only) and `/sql-proxy --revoke`
-  (revoke your bastion creds + stop). See Teardown.
+- **Teardown modes**: `/sql-proxy --disconnect` (sever the local tunnel only — bastion proxy and creds
+  untouched), `/sql-proxy --stop` (also stop your bastion proxy; creds stay valid so the next redial
+  just relaunches the proxy, no browser login), and `/sql-proxy --revoke` (stop the proxy, revoke your
+  bastion creds, then the same local cleanup). See Teardown.
 
 `iam_user` is auto-detected from `gcloud config get-value account` (the dev's own identity); only ask
 if that's empty. Remember it.
@@ -107,7 +109,8 @@ check surfaces `ADC_INVALID` again → re-run this Login flow (browser again), t
 
 On request or periodically:
 - Local tunnel alive (it self-reconnects via `tunnel.sh`'s loop).
-- Remote proxy alive: `gcloud compute ssh … -- 'pgrep -f cloud-sql-proxy'`.
+- Remote proxy alive: `gcloud compute ssh … -- 'pgrep -u $(id -un) -f cloud-sql-proxy'` (scoped to your
+  own OS Login user — on a shared bastion an unscoped `pgrep` would also match other developers').
 - ADC valid: re-run the `bastion-proxy.sh` probe; `ADC_INVALID` → re-Login (browser).
 - End-to-end: `psql … -c 'select 1'`.
 
@@ -121,25 +124,53 @@ the socket path, and the last `select current_user`. On a port conflict, show `l
 
 ## Teardown
 
-### `/sql-proxy --stop` (local only)
+Three tiers, escalating in scope. Prefer `--stop` as the default "I'm done for now" command — leaving a
+bastion proxy running indefinitely (what `--disconnect` alone does) is a standing, pre-authenticated
+channel into a private database that nobody else can see is idle, on a host other developers share.
 
-Stop and clean up the local → bastion tunnel(s) this skill started — and nothing else (the bastion
-proxy and your creds are left intact). Run `scripts/stop-local.sh`: it kills each PID in
+### `/sql-proxy --disconnect` (local only)
+
+Sever the local → bastion tunnel(s) this skill started — and nothing else (the bastion proxy and your
+creds are left running/intact). Run `scripts/stop-local.sh`: it kills each PID in
 `~/.config/sql-proxy/tunnel.pid`, then a `pkill` signature fallback catches orphans from older
 sessions. Also stop any tunnel task still tracked in this session.
 
-### `/sql-proxy --revoke` (bastion + local)
+Use this for a short break (switching networks, laptop sleep) where you'll redial again in the next few
+minutes and don't want to pay even the cost of relaunching the remote proxy.
+
+### `/sql-proxy --stop` (bastion proxy + local tunnel)
+
+Ends the session cleanly: stop your own Cloud SQL Auth Proxy process on the bastion, then sever the
+local tunnel. Your bastion credentials (ADC + gcloud auth) are left valid, so the next redial only has
+to relaunch the proxy — no browser login required.
+
+1. SSH to the bastion and run:
+   `gcloud compute ssh <bastion> --zone <zone> --project <bastion_project> --tunnel-through-iap -- bash -s < scripts/bastion-stop-proxy.sh`
+   (optionally prefix with `TIMEOUT=<seconds>` to override the default 30s). It stops **only this
+   user's** proxy (`pkill -u $(id -un) -f cloud-sql-proxy`), polling for up to `TIMEOUT` seconds for it
+   to actually exit, escalating to `SIGKILL` if it's still alive at the deadline.
+2. Read the printed status: `PROXY_STOPPED` (confirmed dead), `PROXY_NOT_RUNNING` (nothing was
+   running), or `PROXY_STOP_TIMEOUT` (still alive after `SIGKILL` — **warn the user their bastion proxy
+   may still be running** and that a manual check may be needed). If the SSH itself fails (bastion
+   unreachable), warn the same way.
+3. Regardless of step 2's outcome, run the local `--disconnect` cleanup (`scripts/stop-local.sh`) —
+   sever the local tunnel either way.
+
+### `/sql-proxy --revoke` (bastion creds + proxy + local)
 
 Best-effort **full** teardown — try hard, but **warn and continue on any failure, including if the
 bastion is unreachable**:
 
 1. SSH to the bastion and run the revoke script:
    `gcloud compute ssh <bastion> --zone <zone> --project <bastion_project> --tunnel-through-iap -- bash -s < scripts/bastion-revoke.sh`.
-   It stops **only this user's** proxy (`pkill -u $(id -un) -f cloud-sql-proxy`), revokes ADC
-   (`gcloud auth application-default revoke`) and the gcloud account creds (`gcloud auth revoke --all`),
-   and removes `~/csql` + `~/db.sock`. Each step is independent — warn on any that fail. If the SSH
-   itself fails (bastion down, no access), warn and continue to step 2.
-2. Then do the local `--stop` cleanup (`scripts/stop-local.sh`).
+   It stops **only this user's** proxy the same confirm-with-timeout way `--stop` does (escalating to
+   `SIGKILL` if needed), revokes ADC (`gcloud auth application-default revoke`) and the gcloud account
+   creds (`gcloud auth revoke --all`), and removes `~/csql` + `~/db.sock`. Each step is independent —
+   warn on any that fail. If the SSH itself fails (bastion down, no access), warn and continue to step 2.
+2. Then do the local `--disconnect` cleanup (`scripts/stop-local.sh`).
+
+Use this for offboarding, suspected credential compromise, or periodic hygiene — the next connect needs
+a full browser login again (see Login).
 
 Multi-user-safe: the bastion step only ever touches the calling user's own processes/creds, so it's
 safe on a shared bastion.
@@ -148,11 +179,15 @@ safe on a shared bastion.
 
 Background tasks started via `run_in_background` are normally terminated by the harness when the
 session ends. For extra orphan cleanup you *may* wire a Claude Code **SessionEnd** hook (in
-`settings.json`) that runs `scripts/stop-local.sh`. This is optional and depends on harness support —
-treat it as best-effort, never relied upon.
+`settings.json`) that runs the same steps as `/sql-proxy --stop` (bastion proxy + local tunnel), not
+just `--disconnect` — a closed terminal with no explicit teardown is the most common way a bastion
+proxy gets left running. This is optional, depends on harness support, and now includes a remote SSH
+round trip (slower and network-dependent than a purely local hook) — treat it as best-effort, never
+relied upon.
 
 ## Caveats
 
 - The one-time login leaves the dev's refresh token on the bastion (`~/.config/gcloud`) — credential at
-  rest on a shared host; clear it with `/sql-proxy --revoke` when done / at offboarding.
+  rest on a shared host; `/sql-proxy --stop` does not clear this (it only stops the proxy process, not
+  the underlying credential) — clear it with `/sql-proxy --revoke` when done / at offboarding.
 - Never assign or hardcode per-dev ports/IDs; keep the rendezvous `$HOME`-namespaced.
