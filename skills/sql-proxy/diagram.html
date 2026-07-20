@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sql-proxy: Laptop → Bastion → Database</title>
+<style>
+  :root {
+    --ink: #161a20;
+    --paper: #eef1f0;
+    --card: #ffffff;
+    --line: #d5dad8;
+    --muted: #57626c;
+    --teal: #17695d;
+    --copper: #9a5419;
+    --shadow: 0 1px 2px rgba(20, 24, 20, 0.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink: #eef1f0;
+      --paper: #10141a;
+      --card: #1a2129;
+      --line: #2c363f;
+      --muted: #93a2ab;
+      --teal: #4fc2b0;
+      --copper: #e2954f;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ink: #eef1f0;
+    --paper: #10141a;
+    --card: #1a2129;
+    --line: #2c363f;
+    --muted: #93a2ab;
+    --teal: #4fc2b0;
+    --copper: #e2954f;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  }
+  :root[data-theme="light"] {
+    --ink: #161a20;
+    --paper: #eef1f0;
+    --card: #ffffff;
+    --line: #d5dad8;
+    --muted: #57626c;
+    --teal: #17695d;
+    --copper: #9a5419;
+    --shadow: 0 1px 2px rgba(20, 24, 20, 0.06);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.45;
+  }
+
+  .page {
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 3rem 1.75rem 3.5rem;
+  }
+
+  .eyebrow {
+    font-family: ui-monospace, "SFMono-Regular", "Cascadia Code", Menlo, Consolas, monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 0.6rem;
+  }
+
+  h1 {
+    font-family: ui-sans-serif, "Helvetica Neue", Arial, sans-serif;
+    font-weight: 700;
+    font-size: clamp(1.6rem, 1.1rem + 2vw, 2.35rem);
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+    margin: 0 0 0.85rem;
+  }
+
+  .intro {
+    max-width: 62ch;
+    color: var(--muted);
+    font-size: 1rem;
+    margin: 0 0 2.75rem;
+  }
+  .intro code { color: var(--ink); }
+
+  code {
+    font-family: ui-monospace, "SFMono-Regular", "Cascadia Code", Menlo, Consolas, monospace;
+    font-size: 0.86em;
+    background: rgba(120, 130, 120, 0.12);
+    padding: 0.05em 0.35em;
+    border-radius: 4px;
+  }
+
+  .diagram-scroll {
+    overflow-x: auto;
+    padding-bottom: 0.25rem;
+  }
+
+  .diagram {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    min-width: 760px;
+  }
+
+  .node {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    box-shadow: var(--shadow);
+    flex: 1 1 240px;
+    padding: 1.35rem 1.4rem 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+  }
+
+  .node-icon { color: var(--ink); opacity: 0.85; }
+
+  .node h2 {
+    font-family: ui-sans-serif, "Helvetica Neue", Arial, sans-serif;
+    font-size: 1.15rem;
+    font-weight: 700;
+    margin: 0;
+  }
+
+  .node-sub {
+    font-size: 0.82rem;
+    color: var(--muted);
+    margin: -0.5rem 0 0;
+  }
+
+  .node-facts {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    font-size: 0.86rem;
+  }
+  .node-facts li { display: flex; gap: 0.5rem; }
+  .node-facts li::before {
+    content: "";
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--muted);
+    margin-top: 0.55em;
+    flex: none;
+    opacity: 0.6;
+  }
+
+  .lanes {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    margin-top: 0.2rem;
+    padding-top: 0.7rem;
+    border-top: 1px solid var(--line);
+  }
+  .lane {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-size: 0.78rem;
+    font-family: ui-monospace, "SFMono-Regular", "Cascadia Code", Menlo, Consolas, monospace;
+  }
+  .lane .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--teal);
+    flex: none;
+  }
+  .lane-you { color: var(--ink); }
+  .lane-ghost { color: var(--muted); opacity: 0.55; }
+  .lane-ghost .dot { background: var(--muted); }
+
+  .node-caption {
+    font-size: 0.74rem;
+    color: var(--muted);
+    margin: 0.15rem 0 0;
+  }
+
+  .conduit {
+    flex: 0 0 220px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.6rem;
+    padding: 0 1.1rem;
+    text-align: center;
+  }
+
+  .conduit-label {
+    font-family: ui-monospace, "SFMono-Regular", "Cascadia Code", Menlo, Consolas, monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+  .conduit.tunnel .conduit-label { color: var(--teal); }
+  .conduit.proxy .conduit-label { color: var(--copper); }
+
+  .conduit-line-wrap {
+    position: relative;
+    width: 100%;
+    height: 14px;
+    display: flex;
+    align-items: center;
+  }
+  .conduit-line {
+    width: 100%;
+    height: 4px;
+    border-radius: 2px;
+    background-image: repeating-linear-gradient(to right, var(--teal) 0 9px, transparent 9px 19px);
+    background-size: 19px 100%;
+    animation: flow 1.2s linear infinite;
+  }
+  .conduit.proxy .conduit-line {
+    background-image: repeating-linear-gradient(to right, var(--copper) 0 5px, transparent 5px 14px);
+    background-size: 14px 100%;
+    animation-duration: 1.7s;
+  }
+  @keyframes flow { to { background-position: 19px 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    .conduit-line { animation: none; }
+  }
+  .conduit-arrow {
+    position: absolute;
+    right: -2px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--teal);
+  }
+  .conduit.proxy .conduit-arrow { color: var(--copper); }
+
+  .conduit-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.76rem;
+    color: var(--muted);
+  }
+
+  .legend {
+    margin-top: 2.75rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.75rem 2.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--line);
+  }
+  .legend-item {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+    max-width: 42ch;
+  }
+  .legend-swatch {
+    flex: none;
+    width: 26px;
+    height: 3px;
+    border-radius: 2px;
+    transform: translateY(-0.35em);
+  }
+  .legend-swatch.tunnel { background-image: repeating-linear-gradient(to right, var(--teal) 0 5px, transparent 5px 10px); }
+  .legend-swatch.proxy { background-image: repeating-linear-gradient(to right, var(--copper) 0 3px, transparent 3px 7px); }
+  .legend-item p { margin: 0; font-size: 0.86rem; color: var(--muted); }
+  .legend-item strong { color: var(--ink); }
+
+  .footnote {
+    margin-top: 1.5rem;
+    font-size: 0.86rem;
+    color: var(--muted);
+    max-width: 68ch;
+  }
+  .footnote code { color: var(--ink); }
+
+  @media (max-width: 860px) {
+    .diagram { flex-direction: column; min-width: 0; }
+    .node { width: 100%; }
+    .conduit { flex-direction: row; width: 100%; padding: 1rem 0; text-align: left; }
+    .conduit-label { flex: none; width: 9rem; }
+    .conduit-line-wrap { flex: 1; }
+    .conduit-meta { flex: none; width: 12rem; text-align: right; }
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+  <p class="eyebrow">sql-proxy · connection architecture</p>
+  <h1>Laptop → Bastion → Database</h1>
+  <p class="intro">
+    sql-proxy puts a local <code>localhost</code> port in front of a private-IP-only Cloud SQL for
+    PostgreSQL instance. The connection crosses two independent conduits: an IAP SSH tunnel for
+    private-network reach, and a per-developer Cloud SQL Auth Proxy for IAM identity with an
+    auto-refreshing token.
+  </p>
+
+  <div class="diagram-scroll">
+    <div class="diagram">
+
+      <div class="node">
+        <div class="node-icon">
+          <svg viewBox="0 0 48 36" width="42" height="32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="8" y="4" width="32" height="20" rx="2"/>
+            <path d="M2 30h44l-4 4H6z"/>
+          </svg>
+        </div>
+        <h2>Laptop</h2>
+        <p class="node-sub">your machine</p>
+        <ul class="node-facts">
+          <li>psql / GUI / app</li>
+          <li>connects to <code>localhost:5432</code></li>
+          <li>no password, no SSL to configure</li>
+        </ul>
+      </div>
+
+      <div class="conduit tunnel">
+        <div class="conduit-label">IAP SSH tunnel</div>
+        <div class="conduit-line-wrap">
+          <div class="conduit-line"></div>
+          <svg class="conduit-arrow" viewBox="0 0 10 10" width="9" height="9"><path d="M0 0 L10 5 L0 10 Z" fill="currentColor"/></svg>
+        </div>
+        <div class="conduit-meta">
+          <code>--tunnel-through-iap</code>
+          <span>encrypted · no public IP or VPN needed</span>
+        </div>
+      </div>
+
+      <div class="node">
+        <div class="node-icon">
+          <svg viewBox="0 0 40 40" width="36" height="36" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="6" y="4" width="28" height="10" rx="1.5"/>
+            <rect x="6" y="16" width="28" height="10" rx="1.5"/>
+            <rect x="6" y="28" width="28" height="8" rx="1.5"/>
+            <circle cx="12" cy="9" r="1.1" fill="currentColor" stroke="none"/>
+            <circle cx="12" cy="21" r="1.1" fill="currentColor" stroke="none"/>
+            <circle cx="12" cy="32" r="1.1" fill="currentColor" stroke="none"/>
+          </svg>
+        </div>
+        <h2>Bastion</h2>
+        <p class="node-sub">shared VM — one lane per developer</p>
+        <div class="lanes">
+          <div class="lane lane-you"><span class="dot"></span>you — cloud-sql-proxy → <code>~/db.sock</code></div>
+          <div class="lane lane-ghost"><span class="dot"></span>teammate — cloud-sql-proxy → <code>~/db.sock</code></div>
+          <div class="lane lane-ghost"><span class="dot"></span>teammate — cloud-sql-proxy → <code>~/db.sock</code></div>
+        </div>
+        <p class="node-caption">rendezvous is your own $HOME socket, namespaced by OS Login — nothing assigned</p>
+        <p class="node-caption">refresh token at rest: <code>~/.config/gcloud</code></p>
+      </div>
+
+      <div class="conduit proxy">
+        <div class="conduit-label">Cloud SQL Auth Proxy</div>
+        <div class="conduit-line-wrap">
+          <div class="conduit-line"></div>
+          <svg class="conduit-arrow" viewBox="0 0 10 10" width="9" height="9"><path d="M0 0 L10 5 L0 10 Z" fill="currentColor"/></svg>
+        </div>
+        <div class="conduit-meta">
+          <span>IAM auth · auto-refreshing token (ADC)</span>
+          <span>private IP only — the only path in</span>
+        </div>
+      </div>
+
+      <div class="node">
+        <div class="node-icon">
+          <svg viewBox="0 0 40 40" width="36" height="36" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <ellipse cx="20" cy="9" rx="14" ry="5"/>
+            <path d="M6 9v22c0 2.76 6.27 5 14 5s14-2.24 14-5V9"/>
+            <path d="M6 20c0 2.76 6.27 5 14 5s14-2.24 14-5"/>
+          </svg>
+        </div>
+        <h2>Cloud SQL</h2>
+        <p class="node-sub">PostgreSQL, private IP only</p>
+        <ul class="node-facts">
+          <li>no public IP, ever</li>
+          <li>statements attributed to the individual developer</li>
+          <li>full per-user audit in the Postgres logs</li>
+        </ul>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="legend">
+    <div class="legend-item">
+      <span class="legend-swatch tunnel"></span>
+      <p><strong>IAP SSH tunnel</strong> — laptop ⇄ bastion. Encrypted reach into the private network; no bastion port is ever exposed publicly.</p>
+    </div>
+    <div class="legend-item">
+      <span class="legend-swatch proxy"></span>
+      <p><strong>Cloud SQL Auth Proxy</strong> — bastion ⇄ database. IAM identity, auto-refreshing token, one proxy process per developer.</p>
+    </div>
+  </div>
+
+  <p class="footnote">
+    Credentials never reach the laptop or the database directly — they live entirely in the tunnel
+    and proxy layer, scoped to each developer's own identity. That's what makes every statement in
+    the Postgres logs attributable to a person, not a shared service account.
+  </p>
+</div>
+</body>
+</html>

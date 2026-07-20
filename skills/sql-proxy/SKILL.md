@@ -13,6 +13,8 @@ and the [developer guide](https://github.com/engineering11/engineering11/blob/ma
 
 **Prerequisite:** an IAP bastion VM — provision one with [BASTION.md](./BASTION.md).
 
+See [diagram.html](./diagram.html) for a visual walkthrough of the laptop → bastion → database path.
+
 ## Invariants (never trade these away)
 
 - **One proxy per developer**, never a single shared proxy — each dev's own identity + own auto-refresh
