@@ -42,15 +42,24 @@ if that's empty. Remember it.
 
 ## Bootstrap (no remembered state) — ask one question at a time
 
-Ask each on its own turn; accept empty as the default where noted:
+Ask each on its own turn. **Never phrase a question as "leave blank to accept the default"** — this
+runs in a CLI where an empty line doesn't submit anything, so hitting Enter on nothing does not
+register as accepting the default; it just does nothing. Anywhere a default exists, offer it as a
+zero-typing choice with **`AskUserQuestion`** (the default option first, labeled `(Recommended)`), and
+only fall through to a plain typed question if the user opts out — at that point they're always
+typing a real value, so there's no blank case to worry about.
 
-1. **Project ID?** (required — no default)
-2. **Region?** — tell them it defaults to **`us-central1`** on empty.
-3. **Cloud SQL instance name?** — tell them it defaults to **`db-main-${ENV}`**, where `ENV` is derived
+1. **Project ID?** (required — no default) — plain typed question, nothing to pre-select.
+2. **Region?** — `AskUserQuestion` with options `"us-central1 (Recommended)"` and `"A different
+   region"`. Picking the first needs no typing; picking the second immediately asks a plain follow-up
+   ("Which region?") for the real value.
+3. **Cloud SQL instance name?** — first compute the default `db-main-${ENV}`, where `ENV` is derived
    from the project ID: split on `-`; **exactly 2 parts → `ENV` = last part**; **3+ parts → `ENV` =
    second-to-last part** (e.g. `cindex-dev` → `dev`; `cindex-dev-100` → `dev`). If `ENV` can't be
-   determined (e.g. no hyphen in the project ID), **don't guess — ask for the instance name (or `ENV`)
-   explicitly.**
+   determined (e.g. no hyphen in the project ID), **don't guess** — skip `AskUserQuestion` (there's no
+   default to offer) and ask for the instance name directly. Otherwise `AskUserQuestion` with options
+   `"db-main-<ENV> (Recommended)"` and `"A different instance name"`, falling through to a plain typed
+   follow-up on the second choice.
 
 Then build `${PROJECT}:${REGION}:${INSTANCE_NAME}`, auto-detect `iam_user`, save state, and proceed.
 (The Postgres *database* isn't collected — the tunnel is database-agnostic; the dev picks their database
@@ -80,8 +89,9 @@ overwriting a remembered value with a different one.
 3. **Start the tunnel in the background** (auto-reconnecting) with `run_in_background`:
    `BASTION=<b> ZONE=<z> PROJECT_ID=<p> LOCAL_PORT=<port> REMOTE_SOCK=<socket> scripts/tunnel.sh`.
 4. **Verify**: `psql "host=127.0.0.1 port=<port> user=<iam_user> dbname=postgres" -c 'select current_user, now()'`
-   (or a plain TCP check if psql is absent). Report `localhost:<port>` ready — connect as `<iam_user>`,
-   no password, no SSL.
+   (or a plain TCP check if psql is absent). On success, remind the user how to connect:
+   **`127.0.0.1:<port>`** — `<port>` is `5432` unless they passed `--local-port`, in which case show
+   that port instead — user `<iam_user>`, no password, no SSL.
 5. Save state.
 
 ## Login (one-time — and repair on expiry/revoke)
