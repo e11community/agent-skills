@@ -88,10 +88,19 @@ overwriting a remembered value with a different one.
    `SOCKET=/home/<user>/db.sock` — capture that path.
 3. **Start the tunnel in the background** (auto-reconnecting) with `run_in_background`:
    `BASTION=<b> ZONE=<z> PROJECT_ID=<p> LOCAL_PORT=<port> REMOTE_SOCK=<socket> scripts/tunnel.sh`.
-4. **Verify**: `psql "host=127.0.0.1 port=<port> user=<iam_user> dbname=postgres" -c 'select current_user, now()'`
-   (or a plain TCP check if psql is absent). On success, remind the user how to connect:
-   **`127.0.0.1:<port>`** — `<port>` is `5432` unless they passed `--local-port`, in which case show
-   that port instead — user `<iam_user>`, no password, no SSL.
+4. **Verify** — and confirm the DB session is the developer, not a service account:
+   `psql "host=127.0.0.1 port=<port> user=<iam_user> dbname=postgres" -c 'select current_user'`
+   (`current_user` is a SQL keyword — no parentheses; `CURRENT_USER()` is invalid in Postgres). The
+   result must equal `<iam_user>`; if it comes back as a service account (contains `gserviceaccount`,
+   ends in `.iam`, or is the compute SA) **stop and warn** — per-user audit is broken; don't hand over
+   the connection. This is the client-side backstop to the bastion ADC probe (see Login).
+   **First-time connect to a destination + psql absent:** the `nc`/plain-TCP fallback only proves the
+   port is open — it can't run `select current_user`, so it can't confirm an SA isn't the session
+   identity. So on the *first* connect to a given instance, if psql is missing, encourage installing a
+   client first — Homebrew, client-only: **`brew install libpq && brew link --force libpq`**. If the
+   user declines, fall back to the TCP check and tell them the SA identity check was skipped.
+   On success, remind the user how to connect: **`127.0.0.1:<port>`** — `<port>` is `5432` unless they
+   passed `--local-port`, in which case show that port instead — user `<iam_user>`, no password, no SSL.
 5. Save state.
 
 ## Login (one-time — and repair on expiry/revoke)
@@ -113,9 +122,14 @@ act between its prompts:
    `RESP_FILE`. The helper relays it to the bastion and prints `ADC_LOGIN_DONE`. Key your wait on that URL
    line (or the local command's completion notification), **not** a fixed `sleep` budget.
 
-**Existing ADC** is handled by only entering this flow when the probe says `ADC_INVALID`. **Repair on
-expiry/revoke:** if the proxy later can't refresh (revoked token or a reauth policy fired), the health
-check surfaces `ADC_INVALID` again → re-run this Login flow (browser again), then restart the proxy.
+**Existing ADC** is handled by only entering this flow when the probe says `ADC_INVALID`. The probe
+verifies the ADC is the **developer's own** identity, not just that *some* token exists: on a GCE
+bastion, gcloud silently falls back to the attached compute service account via the metadata server
+when no user ADC file is present, which would pass a naive check, skip the browser login, and run the
+proxy under a shared SA (defeating per-user audit). So `bastion-proxy.sh` resolves the token's email
+and treats a missing email or a `*.gserviceaccount.com` identity as `ADC_INVALID` → forces this login.
+**Repair on expiry/revoke:** if the proxy later can't refresh (revoked token or a reauth policy fired),
+the health check surfaces `ADC_INVALID` again → re-run this Login flow (browser again), then restart the proxy.
 
 ## Health & repair
 
