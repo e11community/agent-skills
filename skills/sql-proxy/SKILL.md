@@ -13,7 +13,7 @@ and the [developer guide](https://github.com/engineering11/engineering11/blob/ma
 
 **Prerequisite:** an IAP bastion VM — provision one with [BASTION.md](./BASTION.md).
 
-See [diagram.html](./diagram.html) for a visual walkthrough of the laptop → bastion → database path.
+See [diagram.html](https://htmlpreview.github.io/?https://github.com/e11community/agent-skills/blob/main/skills/sql-proxy/diagram.html) for a visual walkthrough of the laptop → bastion → database path.
 
 ## Invariants (never trade these away)
 
