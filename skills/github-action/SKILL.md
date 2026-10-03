@@ -168,7 +168,7 @@ stays consistent with the rest of the setup.
 ## Pinning actions
 
 Two postures by trust level: **platform-vendor actions** (GitHub, Google,
-HashiCorp, Docker, Microsoft/Azure) ride the **current major tag**;
+HashiCorp, OpenTofu, Docker, Microsoft/Azure) ride the **current major tag**;
 **community/third-party actions** must be **SHA-pinned** with the version in a
 trailing comment. The split is a supply-chain stance — vendor orgs are trusted to
 not rewrite a major tag maliciously; a random community action is a risk (see the
@@ -206,7 +206,7 @@ When you write a _new_ workflow, use this table rather than habit:
 | GitHub          | `actions/github-script`                 | `@v9` |
 | GitHub          | `actions/setup-go`                      | `@v6` |
 | GitHub          | `actions/setup-java`                    | `@v5` |
-| GitHub          | `actions/setup-node`                    | `@v6` |
+| GitHub          | `actions/setup-node`                    | `@v7` |
 | GitHub          | `actions/setup-python`                  | `@v6` |
 | GitHub          | `actions/upload-artifact`               | `@v7` |
 | GitHub          | `actions/upload-pages-artifact`         | `@v5` |
@@ -215,6 +215,7 @@ When you write a _new_ workflow, use this table rather than habit:
 | Google          | `google-github-actions/setup-gcloud`    | `@v3` |
 | Google          | `googleapis/release-please-action`      | `@v5` |
 | HashiCorp       | `hashicorp/setup-terraform`             | `@v4` |
+| OpenTofu        | `opentofu/setup-opentofu`               | `@v2` |
 | Docker          | `docker/build-push-action`              | `@v7` |
 | Docker          | `docker/login-action`                   | `@v4` |
 | Docker          | `docker/setup-buildx-action`            | `@v4` |
@@ -222,7 +223,7 @@ When you write a _new_ workflow, use this table rather than habit:
 | Microsoft/Azure | `azure/login`                           | `@v3` |
 | Microsoft/Azure | `Azure/functions-action`                | `@v1` |
 
-_Current as of 2026-06-15._ Dependabot's `github-actions` updates (below) keep
+_Current as of 2026-10-03._ Dependabot's `github-actions` updates (below) keep
 already-pinned refs moving as new majors ship.
 
 > **release-please moved.** `google-github-actions/release-please-action` and
@@ -546,7 +547,7 @@ the original author + a link to the upstream repo in the README.
 | Commits                 | Conventional Commits; `commit-msg` hook (commitlint+husky) + PR lint in CI; `npm run commit` (cz)                                                                         |
 | CI                      | `validate.yml`: commitlint (PRs) + typecheck + format-check + build + `git diff --exit-code dist/`                                                                        |
 | Squash merge            | set `squash_merge_commit_title=PR_TITLE`; lint the PR title (`pr-title.yml`) — the squashed subject is what release.yml parses                                            |
-| Action refs (vendor)    | platform vendors (GitHub/Google/HashiCorp/Docker/Azure) → current major (`checkout@v6`) — see the table                                                                   |
+| Action refs (vendor)    | platform vendors (GitHub/Google/HashiCorp/OpenTofu/Docker/Azure) → current major (`checkout@v6`) — see the table                                                                 |
 | Action refs (community) | non-vendor actions → SHA pin + `# version` comment (as specific as upstream tags); never `@main`                                                                          |
 | Action swap-outs        | `actions-ecosystem/action-regex-match` → `e11community/regex-match`; `w9jds/setup-firebase` → `e11community/setup-firebase` — ride current major, drop the upstream's pin |
 | Deps                    | Dependabot (`github-actions` + `npm`), conventional-commit messages (`ci(deps)` / `chore(deps)`)                                                                          |
@@ -579,6 +580,7 @@ the original author + a link to the upstream repo in the README.
 | Relying on the conventional branch commit under squash-merge                                    | Squash ships the PR title — set `squash_merge_commit_title=PR_TITLE` + lint it (`pr-title.yml`)                 |
 | `conventional-changelog-cli`                                                                    | Deprecated — use the maintained `conventional-changelog` package                                                |
 | Pinning `actions/checkout@v4` from memory                                                       | Use the current major (`@v6`) — see the version table                                                           |
+| `actions/setup-node@v7` with `registry-url` but no `NODE_AUTH_TOKEN`                             | v7 no longer exports a placeholder token — set `NODE_AUTH_TOKEN` on every npm step after setup-node             |
 | Tag-pinning a community action (`peter-evans/...@v6`)                                           | SHA-pin it + trailing `# version` comment (vendor orgs may ride major tags; others may not)                     |
 | Using an upstream we've forked (`actions-ecosystem/action-regex-match`, `w9jds/setup-firebase`) | Swap for our e11community fork (`e11community/regex-match`, `e11community/setup-firebase`) — see the swap table |
 | Any third-party action on `@main`/`@master`                                                     | Moving branch = runs whatever lands upstream — pin a SHA                                                        |
