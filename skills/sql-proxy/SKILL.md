@@ -112,7 +112,12 @@ act between its prompts:
 1. `BASTION=<b> ZONE=<z> PROJECT_ID=<p> scripts/login-helper.sh` → it starts
    `gcloud auth application-default login --no-browser` on the bastion and prints `BOOTSTRAP_CMD=<…>`
    and `RESP_FILE=<path>`.
-2. Run `BOOTSTRAP_CMD` **locally** (you run it), piping `y` to clear its `Proceed (y/N)?` safety prompt
+2. **Beep first:** run `scripts/beep.sh` immediately before `BOOTSTRAP_CMD` (same command line:
+   `scripts/beep.sh; printf 'y\n' | <BOOTSTRAP_CMD> …`), and tell the user a browser login is coming.
+   It rings the terminal bell (ANSI BEL) so a user who looked away notices the browser prompt. It is
+   best-effort and always exits 0: if there's no terminal to ring, or the bell fails, carry on with the
+   login, never stop or retry for it.
+   Run `BOOTSTRAP_CMD` **locally** (you run it), piping `y` to clear its `Proceed (y/N)?` safety prompt
    and capturing output: `printf 'y\n' | <BOOTSTRAP_CMD> >out.txt 2>&1`. The local gcloud opens the
    browser — guide the user through Google login/MFA/consent. It then **auto-captures the redirect** (via
    a `localhost:<port>` server) and, under "Copy the following line back…", prints a line beginning
