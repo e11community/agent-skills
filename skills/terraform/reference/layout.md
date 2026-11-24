@@ -116,13 +116,29 @@ exist": that is the expected resting state of an un-bootstrapped project, not a 
 No other service account runs pipeline steps. A permission a stack lacks is added
 upstream to `github-gcp-project`'s `project_roles`, not granted by hand.
 
-## CI (reference implementation: cultureindex-infrastructure)
+## CI (templates in `.github/workflows/`; reference implementation: cultureindex-infrastructure)
+
+Copy this skill's [`.github/workflows/`](../.github/workflows/) into the downstream repo
+and replace the placeholders:
+
+| Placeholder | Replace with | Example |
+| --- | --- | --- |
+| `PLATFORM` | the platform prefix of the project IDs | `cindex` → `cindex-ci-100` |
+| `OWNER/INFRA_REPO` | this infrastructure repository | `cultureindex/cultureindex-infrastructure` |
+| `OWNER/APP_REPO` | the app repository whose environments `github-environment` writes | `cultureindex/cultureindex-backend` |
+
+Then fit them to the platform: one `PLATFORM-<env>-100` per converged project in
+`tf-converge.yml`'s dispatch options and its apply-rule `case`, `tf-plan.yml`'s `ALL`
+list, and `tf-drift.yml`'s matrix. A platform without Cloud SQL drops the IAP tunnel
+steps and runs every stack in one step. The repository variables the templates read
+(`GCP_WIF_PROVIDER`, `GCP_BOOTSTRAP_SERVICE_ACCOUNT`, `REPO_REACHER_APP_ID`) come from
+the admin stack; the secret `REPO_REACHER_KEY` is set by hand.
 
 | Workflow | Trigger | Does |
 | --- | --- | --- |
-| `tf-converge.yml` | reusable + dispatch | one project: `--check`, then stacks; modes `bootstrap` / `plan` / `apply` / `drift`; fails first step if `bootstrap` or prod is not on a production ref |
+| `tf-converge.yml` | reusable + dispatch | one project: `--check`, then stacks; modes `bootstrap` / `plan` / `apply` / `drift`; fails first step if `bootstrap` or prod is not on a production ref, or if `apply` runs from a ref the project doesn't allow (ci: default branch; qa: default branch, `qa`, `qa-*`) |
 | `tf-plan.yml` | PR touching `tf/**` | plan affected non-prod projects (a change outside `tf/_impl/gcp-projects/` plans all), comment on PR |
-| `tf-apply.yml` | push to `main` / `production(-.+)?` | `main`: non-prod in order (ci → qa). Production branch: prod only |
+| `tf-apply.yml` | push to `main` / `qa(-.+)?` / `production(-.+)?` | `main`: ci, then qa while `TF_APPLY_QA=true`. `qa` branch: qa only. Production branch: prod only |
 | `tf-drift.yml` | nightly + dispatch | drift-plan; open/update an issue |
 
 Auth: `google-github-actions/auth` with `workload_identity_provider: vars.GCP_WIF_PROVIDER`

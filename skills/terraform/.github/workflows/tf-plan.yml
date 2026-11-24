@@ -1,0 +1,64 @@
+name: TF Plan
+
+# On a PR touching Terraform: plan every affected PLATFORM project and comment the
+# result. A change under a project's own directory plans that project; a change to
+# anything shared (the pipeline, the org/platform declarations) plans all of them.
+#
+# Never PLATFORM-prod-100: a PR's ref is refs/pull/<n>/merge, and prod's federation admits
+# production refs only. Prod is planned and applied on its production branch (tf-apply).
+#
+# Never PLATFORM-admin-100: the control plane is converged by a human with admin
+# rights, not by a pipeline identity. Exclude any other project this repo doesn't converge
+# yet (add it to the grep -vxE below) until it's onboarded to tf/pipeline.
+
+on:
+  pull_request:
+    paths:
+      - 'tf/**'
+      - '.github/workflows/tf-*.yml'
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+jobs:
+  detect:
+    name: Affected projects
+    runs-on: ubuntu-latest
+    outputs:
+      projects: ${{ steps.detect.outputs.projects }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - id: detect
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          ALL='["PLATFORM-ci-100","PLATFORM-qa-100"]'
+          changed="$(git diff --name-only "$BASE" "$HEAD")"
+          if grep -qvE '^tf/_impl/gcp-projects/' <<<"$(grep -E '^(tf/|\.github/workflows/tf-)' <<<"$changed")"; then
+            projects="$ALL"
+          else
+            projects="$( { grep -oE '^tf/_impl/gcp-projects/PLATFORM-[a-z]+-100' <<<"$changed" || true; } \
+              | sed 's|.*/||' | { grep -vxE 'PLATFORM-(prod|admin)-100' || true; } | sort -u | jq -R . | jq -sc .)"
+          fi
+          echo "projects=$projects" >> "$GITHUB_OUTPUT"
+          echo "planning: $projects"
+
+  plan:
+    name: Plan
+    needs: detect
+    if: ${{ needs.detect.outputs.projects != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        project: ${{ fromJSON(needs.detect.outputs.projects) }}
+    uses: ./.github/workflows/tf-converge.yml
+    with:
+      project: ${{ matrix.project }}
+      mode: plan
+    secrets: inherit

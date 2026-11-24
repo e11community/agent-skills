@@ -1,0 +1,59 @@
+name: TF Drift
+
+# Plan every stack with -detailed-exitcode. Anything other than "no changes" opens (or
+# updates) one issue.
+#
+#   nightly, and dispatch from main      PLATFORM-ci-100, PLATFORM-qa-100
+#   dispatch from a production branch    PLATFORM-prod-100
+#
+# Prod's federation admits production refs only (^refs/heads/production(-.+)?$), and a
+# schedule always runs on the default branch, so prod drift is checked by dispatching
+# this workflow from a production branch.
+
+on:
+  schedule:
+    - cron: '23 9 * * *' # daily, off the hour
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  drift:
+    name: Drift
+    strategy:
+      fail-fast: false
+      matrix:
+        project: >-
+          ${{ fromJSON(
+                (github.ref == 'refs/heads/production' ||
+                 (startsWith(github.ref, 'refs/heads/production-') && github.ref != 'refs/heads/production-'))
+                && '["PLATFORM-prod-100"]' || '["PLATFORM-ci-100","PLATFORM-qa-100"]'
+          ) }}
+    uses: ./.github/workflows/tf-converge.yml
+    with:
+      project: ${{ matrix.project }}
+      mode: drift
+    secrets: inherit
+
+  report:
+    name: Report
+    needs: drift
+    if: ${{ always() && needs.drift.result == 'failure' }}
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Terraform drift detected"
+          body="One or more PLATFORM projects did not plan clean (drift, or a failed plan). Per-project summaries: $RUN"
+          n="$(gh issue list --repo "${{ github.repository }}" --state open --search "in:title \"$title\"" --json number --jq '.[0].number')"
+          if [ -n "$n" ]; then
+            gh issue comment "$n" --repo "${{ github.repository }}" --body "$body"
+          else
+            gh issue create --repo "${{ github.repository }}" --title "$title" --body "$body"
+          fi

@@ -1,0 +1,91 @@
+name: TF Apply
+
+# Converge on push, by branch:
+#
+#   default branch (main)      ci, then qa — qa only after ci applied cleanly, and only
+#                              while the repository variable TF_APPLY_QA is `true`.
+#                              NEVER prod.
+#   ^qa(-.+)?                  qa, and only qa (as an app repo's qa and qa-* branches
+#                              deploy qa). Cut the branch from main, so qa gets what ci
+#                              already has; it applies whatever it holds.
+#   ^production(-.+)?          prod, and only prod. Promotion to production is a push
+#                              (merge) to a production branch, never to the default.
+#
+# TF_APPLY_QA: leave it unset while changes should land in ci first and reach qa
+# deliberately (by a qa branch, or a tf-converge dispatch). To have main apply qa too:
+#   gh variable set TF_APPLY_QA --body true --repo OWNER/INFRA_REPO
+#
+# workflow_dispatch follows the same rule, decided by the ref it is dispatched from;
+# dispatched from any other branch it does nothing, so unmerged code is never applied.
+#
+# This file's gate alone could be edited by any branch, which runs its own copy. GCP
+# enforces the same rule: prod's federation admits ^refs/heads/production(-.+)?$ only,
+# and the ruleset limits what lands on those branches — see tf/README.md, "Production
+# refs only".
+
+on:
+  push:
+    branches:
+      - main
+      - qa
+      - 'qa-**'
+      - production
+      - 'production-**'
+    paths:
+      - 'tf/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+concurrency:
+  group: tf-apply-${{ github.ref_name }}
+  cancel-in-progress: false # never interrupt an apply mid-flight
+
+jobs:
+  ci:
+    if: ${{ github.ref_type == 'branch' && github.ref_name == github.event.repository.default_branch }}
+    uses: ./.github/workflows/tf-converge.yml
+    with:
+      project: PLATFORM-ci-100
+      mode: apply
+    secrets: inherit
+
+  qa:
+    needs: ci
+    if: ${{ github.ref_type == 'branch' && github.ref_name == github.event.repository.default_branch && vars.TF_APPLY_QA == 'true' }}
+    uses: ./.github/workflows/tf-converge.yml
+    with:
+      project: PLATFORM-qa-100
+      mode: apply
+    secrets: inherit
+
+  # ^qa(-.+)?: exactly `qa`, or `qa-` followed by at least one character. No ci first:
+  # the branch is cut from main, whose push already applied ci.
+  qa-branch:
+    if: >-
+      ${{ github.ref_type == 'branch' && (
+          github.ref_name == 'qa' ||
+          (startsWith(github.ref_name, 'qa-') && github.ref_name != 'qa-')
+      ) }}
+    uses: ./.github/workflows/tf-converge.yml
+    with:
+      project: PLATFORM-qa-100
+      mode: apply
+    secrets: inherit
+
+  # ^production(-.+)?: exactly `production`, or `production-` followed by at least one
+  # character.
+  prod:
+    if: >-
+      ${{ github.ref_type == 'branch' && (
+          github.ref_name == 'production' ||
+          (startsWith(github.ref_name, 'production-') && github.ref_name != 'production-')
+      ) }}
+    uses: ./.github/workflows/tf-converge.yml
+    with:
+      project: PLATFORM-prod-100
+      mode: apply
+    secrets: inherit
