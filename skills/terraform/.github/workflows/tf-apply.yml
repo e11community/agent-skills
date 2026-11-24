@@ -1,114 +1,91 @@
-name: Terraform Apply
-run-name: TF Apply, ${{ github.event_name == 'push' && 'PLATFORM-ci-100' || inputs.project_id }}
+name: TF Apply
+
+# Converge on push, by branch:
+#
+#   default branch (main)      ci, then qa — qa only after ci applied cleanly, and only
+#                              while the repository variable TF_APPLY_QA is `true`.
+#                              NEVER prod.
+#   ^qa(-.+)?                  qa, and only qa (as an app repo's qa and qa-* branches
+#                              deploy qa). Cut the branch from main, so qa gets what ci
+#                              already has; it applies whatever it holds.
+#   ^production(-.+)?          prod, and only prod. Promotion to production is a push
+#                              (merge) to a production branch, never to the default.
+#
+# TF_APPLY_QA: leave it unset while changes should land in ci first and reach qa
+# deliberately (by a qa branch, or a tf-converge dispatch). To have main apply qa too:
+#   gh variable set TF_APPLY_QA --body true --repo OWNER/INFRA_REPO
+#
+# workflow_dispatch follows the same rule, decided by the ref it is dispatched from;
+# dispatched from any other branch it does nothing, so unmerged code is never applied.
+#
+# This file's gate alone could be edited by any branch, which runs its own copy. GCP
+# enforces the same rule: prod's federation admits ^refs/heads/production(-.+)?$ only,
+# and the ruleset limits what lands on those branches — see tf/README.md, "Production
+# refs only".
 
 on:
   push:
     branches:
-      - develop
       - main
+      - qa
+      - 'qa-**'
+      - production
+      - 'production-**'
     paths:
-      - 'hcl/modules/**'
-      - 'hcl/environments/**'
-      - 'hcl/org-modules/**'
-      - 'hcl/org-stacks/**'
-      - 'hcl/platform/**'
-
+      - 'tf/**'
   workflow_dispatch:
-    inputs:
-      project_id:
-        description: 'The GCP project ID'
-        default: PLATFORM-ci-100
-        type: choice
-        options:
-          - PLATFORM-dev-100
-          - PLATFORM-ci-100
-          - PLATFORM-qa-100
-          - PLATFORM-demo-100
-          - PLATFORM-prod-100
 
 permissions:
   contents: read
+  id-token: write
+  pull-requests: write
 
 concurrency:
-  group: terraform-apply
-  cancel-in-progress: false
-
-env:
-  TF_VERSION: '1.9.8'
-  TF_IN_AUTOMATION: 'true'
+  group: tf-apply-${{ github.ref_name }}
+  cancel-in-progress: false # never interrupt an apply mid-flight
 
 jobs:
-  calculations:
-    name: Calculations
-    runs-on: ubuntu-latest
-    outputs:
-      environment: ${{ steps.bash_calculations.outputs.environment }}
-      project_id: ${{ steps.bash_calculations.outputs.project_id }}
-    steps:
-      - id: bash_calculations
-        name: Bash Calculations
-        run: |
-          PROJECT_ID="${{ github.event_name == 'push' && 'PLATFORM-ci-100' || inputs.project_id }}"
-          ENVIRONMENT="$(echo "${PROJECT_ID}" | grep -Po '\w+-\K(\w+)')"
-          echo "environment=${ENVIRONMENT}" | tee -a "$GITHUB_OUTPUT"
-          echo "project_id=${PROJECT_ID}" | tee -a "$GITHUB_OUTPUT"
+  ci:
+    if: ${{ github.ref_type == 'branch' && github.ref_name == github.event.repository.default_branch }}
+    uses: ./.github/workflows/tf-converge.yml
+    with:
+      project: PLATFORM-ci-100
+      mode: apply
+    secrets: inherit
 
-  apply:
-    name: Apply — ${{ needs.calculations.outputs.environment }}
-    runs-on: ubuntu-latest
-    environment: ${{ needs.calculations.outputs.environment }}
-    concurrency:
-      cancel-in-progress: false
-      queue: max
-      group: apply-${{ needs.calculations.outputs.environment }}
-    needs:
-      - calculations
-    steps:
-      - id: checkout
-        name: Checkout
-        uses: actions/checkout@v6
+  qa:
+    needs: ci
+    if: ${{ github.ref_type == 'branch' && github.ref_name == github.event.repository.default_branch && vars.TF_APPLY_QA == 'true' }}
+    uses: ./.github/workflows/tf-converge.yml
+    with:
+      project: PLATFORM-qa-100
+      mode: apply
+    secrets: inherit
 
-      - id: terraform_setup
-        name: Setup Terraform
-        uses: hashicorp/setup-terraform@v4
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
+  # ^qa(-.+)?: exactly `qa`, or `qa-` followed by at least one character. No ci first:
+  # the branch is cut from main, whose push already applied ci.
+  qa-branch:
+    if: >-
+      ${{ github.ref_type == 'branch' && (
+          github.ref_name == 'qa' ||
+          (startsWith(github.ref_name, 'qa-') && github.ref_name != 'qa-')
+      ) }}
+    uses: ./.github/workflows/tf-converge.yml
+    with:
+      project: PLATFORM-qa-100
+      mode: apply
+    secrets: inherit
 
-      - id: auth
-        name: GCP Auth
-        uses: google-github-actions/auth@v3
-        with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
-          project_id: ${{ needs.calculations.outputs.project_id }}
-
-      - id: terraform_init
-        name: Terraform Init
-        working-directory: hcl/environments/${{ needs.calculations.outputs.environment }}/main
-        run: terraform init
-
-      - id: terraform_apply
-        name: Terraform Apply
-        env:
-          TF_VAR_cloudflare_api_token: ${{ fromJson(secrets.CLOUDFLARE_ZONE_USER_API_TOKEN).token }}
-          # TF_VAR_mailgun_api_key: $--{{ secrets.MAILGUN_API_KEY }}
-          # TF_VAR_rollbar_api_key: $--{{ secrets.ROLLBAR_API_KEY }}
-        working-directory: hcl/environments/${{ needs.calculations.outputs.environment }}/main
-        timeout-minutes: 40
-        run: |
-          terraform plan -out ${{ needs.calculations.outputs.project_id }}.tfplan && \
-          terraform apply -auto-approve ${{ needs.calculations.outputs.project_id }}.tfplan
-
-      - id: terraform_output
-        name: Terraform Output
-        working-directory: hcl/environments/${{ needs.calculations.outputs.environment }}/main
-        run: |
-          terraform output -json | tee -a ${{ needs.calculations.outputs.project_id }}.output.json
-
-      - id: upload_artifacts
-        name: Upload Artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: terraform
-          path: |
-            hcl/environments/${{ needs.calculations.outputs.environment }}/main/${{ needs.calculations.outputs.project_id }}.output.json
-          if-no-files-found: warn
+  # ^production(-.+)?: exactly `production`, or `production-` followed by at least one
+  # character.
+  prod:
+    if: >-
+      ${{ github.ref_type == 'branch' && (
+          github.ref_name == 'production' ||
+          (startsWith(github.ref_name, 'production-') && github.ref_name != 'production-')
+      ) }}
+    uses: ./.github/workflows/tf-converge.yml
+    with:
+      project: PLATFORM-prod-100
+      mode: apply
+    secrets: inherit

@@ -9,7 +9,7 @@ coding agents (Claude Code, and others). Each skill is a directory under
 | Skill                                    | What it's for                                                                       |
 | ---------------------------------------- | ----------------------------------------------------------------------------------- |
 | [`github-action`](skills/github-action/) | Authoring, modernizing, or reviewing a TypeScript GitHub Action (esbuild + node24). |
-| [`terraform`](skills/terraform/)         | Authoring, reviewing, or modifying Terraform for the multi-environment GCP repo.     |
+| [`terraform`](skills/terraform/)         | OpenTofu in the sdk-terraform regime: scope-keyed stacks, shared modules, OIDC CI.  |
 
 ## Managing skills
 

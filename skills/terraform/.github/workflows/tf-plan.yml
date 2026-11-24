@@ -1,123 +1,64 @@
-name: Terraform Plan
-run-name: TF Plan, ${{ inputs.project_id }}
+name: TF Plan
+
+# On a PR touching Terraform: plan every affected PLATFORM project and comment the
+# result. A change under a project's own directory plans that project; a change to
+# anything shared (the pipeline, the org/platform declarations) plans all of them.
+#
+# Never PLATFORM-prod-100: a PR's ref is refs/pull/<n>/merge, and prod's federation admits
+# production refs only. Prod is planned and applied on its production branch (tf-apply).
+#
+# Never PLATFORM-admin-100: the control plane is converged by a human with admin
+# rights, not by a pipeline identity. Exclude any other project this repo doesn't converge
+# yet (add it to the grep -vxE below) until it's onboarded to tf/pipeline.
+
 on:
-  workflow_dispatch:
-    inputs:
-      project_id:
-        default: PLATFORM-ci-100
-        type: choice
-        options:
-          - PLATFORM-dev-100
-          - PLATFORM-ci-100
-          - PLATFORM-qa-100
-          - PLATFORM-demo-100
-          - PLATFORM-prod-100
-  workflow_call:
-    inputs:
-      project_id:
-        required: true
-        type: string
+  pull_request:
+    paths:
+      - 'tf/**'
+      - '.github/workflows/tf-*.yml'
 
 permissions:
   contents: read
+  id-token: write
   pull-requests: write
 
-env:
-  TF_VERSION: '1.9.8'
-  TF_IN_AUTOMATION: 'true'
-
 jobs:
-  calculations:
-    name: Calculations
+  detect:
+    name: Affected projects
     runs-on: ubuntu-latest
     outputs:
-      environment: ${{ steps.bash_calculations.outputs.environment }}
-      project_id: ${{ steps.bash_calculations.outputs.project_id }}
+      projects: ${{ steps.detect.outputs.projects }}
     steps:
-      - id: bash_calculations
-        name: Bash Calculations
-        run: |
-          ENVIRONMENT="$(echo "${{ inputs.project_id }}" | grep -Po '\w+-\K(\w+)')"
-          echo "environment=${ENVIRONMENT}" | tee -a "$GITHUB_OUTPUT"
-
-  plan:
-    name: Plan, ${{ needs.calculations.outputs.environment }}
-    runs-on: ubuntu-latest
-    needs:
-      - calculations
-    environment: ${{ needs.calculations.outputs.environment }}
-    concurrency:
-      cancel-in-progress: false
-      queue: max
-      group: plan-${{ needs.calculations.outputs.environment }}
-    steps:
-      - id: checkout
-        name: Checkout
-        uses: actions/checkout@v6
-
-      - id: terraform_setup
-        name: Setup Terraform
-        uses: hashicorp/setup-terraform@v4
+      - uses: actions/checkout@v6
         with:
-          terraform_version: ${{ env.TF_VERSION }}
-
-      - id: auth
-        name: GCP Auth
-        uses: google-github-actions/auth@v3
-        with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
-          project_id: ${{ inputs.project_id }}
-
-      - id: terraform_init
-        name: Terraform Init
-        working-directory: hcl/environments/${{ needs.calculations.outputs.environment }}/main
-        run: terraform init
-
-      - id: terraform_validate
-        name: Terraform Validate
-        working-directory: hcl/environments/${{ needs.calculations.outputs.environment }}/main
-        run: terraform validate
-
-      - id: terraform_plan
-        name: Terraform Plan
+          fetch-depth: 0
+      - id: detect
         env:
-          TF_VAR_cloudflare_api_token: ${{ fromJson(secrets.CLOUDFLARE_ZONE_USER_API_TOKEN).token }}
-          # TF_VAR_mailgun_api_key: $--{{ secrets.MAILGUN_API_KEY }}
-          # TF_VAR_rollbar_api_key: $--{{ secrets.ROLLBAR_API_KEY }}
-        working-directory: hcl/environments/${{ needs.calculations.outputs.environment }}/main
-        timeout-minutes: 20
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          terraform plan \
-            -out=${{ inputs.project_id }}.tfplan \
-            -no-color \
-            2>&1 | tee ${{ inputs.project_id }}.plan-output.txt
+          ALL='["PLATFORM-ci-100","PLATFORM-qa-100"]'
+          changed="$(git diff --name-only "$BASE" "$HEAD")"
+          if grep -qvE '^tf/_impl/gcp-projects/' <<<"$(grep -E '^(tf/|\.github/workflows/tf-)' <<<"$changed")"; then
+            projects="$ALL"
+          else
+            projects="$( { grep -oE '^tf/_impl/gcp-projects/PLATFORM-[a-z]+-100' <<<"$changed" || true; } \
+              | sed 's|.*/||' | { grep -vxE 'PLATFORM-(prod|admin)-100' || true; } | sort -u | jq -R . | jq -sc .)"
+          fi
+          echo "projects=$projects" >> "$GITHUB_OUTPUT"
+          echo "planning: $projects"
 
-      - id: upload_artifacts
-        name: Upload Artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: terraform-plan
-          path: |
-            hcl/environments/${{ needs.calculations.outputs.environment }}/main/${{ inputs.project_id }}.plan-output.txt
-          if-no-files-found: warn
-
-      - id: pr_comment
-        name: Comment PR
-        if: github.event.pull_request.number
-        uses: actions/github-script@v9
-        with:
-          script: |
-            const fs = require('fs');
-            const plan = fs.readFileSync(
-              'hcl/environments/${{ needs.calculations.outputs.environment }}/main/${{ inputs.project_id }}.plan-output.txt', 'utf8'
-            );
-            const truncated = plan.length > 60000
-              ? plan.substring(0, 60000) + '\n\n... truncated ...'
-              : plan;
-            github.rest.issues.createComment({
-              issue_number: ${{ github.event.pull_request.number }},
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `### Plan: \`${{ needs.calculations.outputs.environment }}\`\n<details><summary>Show</summary>\n\n\`\`\`\n${truncated}\n\`\`\`\n</details>`
-            });
+  plan:
+    name: Plan
+    needs: detect
+    if: ${{ needs.detect.outputs.projects != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        project: ${{ fromJSON(needs.detect.outputs.projects) }}
+    uses: ./.github/workflows/tf-converge.yml
+    with:
+      project: ${{ matrix.project }}
+      mode: plan
+    secrets: inherit

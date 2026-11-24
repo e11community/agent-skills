@@ -1,0 +1,278 @@
+name: TF Converge
+
+# Converge one PLATFORM GCP project: every stack under
+# tf/_impl/gcp-projects/<project>/gcp-project-stacks/, in pipeline.conf order, via
+# tf/pipeline/run.sh. Each tofu init/plan/apply is retried — 3 tries, 60s apart —
+# because GCP propagation races fail once and pass a minute later.
+#
+# Reusable (tf-plan / tf-apply / tf-drift call it) and dispatchable by hand.
+#
+#   bootstrap  once per project: apply services → identities → pipeline-access as
+#              bootstrap-admin. That creates github-actions@<project>, grants it its
+#              project roles, and lets the platform repos federate into it.
+#   plan       dry run of every stack, as github-actions. Later stacks read earlier
+#              stacks' remote state, so on a project that has never been applied they
+#              cannot plan yet — expected, not broken.
+#   apply      apply every stack, in order, as github-actions.
+#   drift      plan -detailed-exitcode as github-actions; fails if any stack has changes.
+#
+# Who runs as whom — no other service account runs a pipeline step:
+#   bootstrap-admin          folder-scoped; `bootstrap` mode only. vars.GCP_BOOTSTRAP_SERVICE_ACCOUNT
+#   github-actions@<project> predefined roles per resource type + access-setting admin
+#                            roles on its own project (never editor or owner); every
+#                            other mode, forever
+#
+# Which ref may apply which project. plan and drift change nothing and run
+# from any ref (tf-plan runs them on every PR); apply is gated here:
+#   PLATFORM-ci-100    the default branch (main)
+#   PLATFORM-qa-100    the default branch, or ^qa(-.+)?
+#   PLATFORM-prod-100  ^production(-.+)?, below
+# Add a case below for every project this repo converges; a project with no rule is refused.
+# For ci and qa this is the workflow's own check, which a branch could edit in its own
+# copy; GCP federation doesn't enforce it, as it does for prod. It stops mistakes (an
+# unmerged branch applied, then reverted by the next merge to main), not a determined
+# writer, who is already trusted with the repository.
+#
+# Production refs only (^refs/heads/production(-.+)?$) may run `bootstrap` (any project)
+# or touch PLATFORM-prod-100 (any mode). GCP enforces it — those federation bindings admit
+# no other ref — and the first step below just fails early, with a readable error,
+# instead of at GCP auth.
+#
+# Not here, on purpose:
+#   remote-state  keeps LOCAL state, permanently (it creates the bucket the others
+#                 name). A runner has none of that state, so it would plan a create.
+#                 Run it by hand, once — see tf/pipeline/README.md.
+#
+# Three credentials, none of them stored in this repo:
+#   GCP      Workload Identity Federation via GCP_WIF_PROVIDER (published by the
+#            PLATFORM-admin-100 admin stack). No service account key exists.
+#   modules  repo-reacher rewrites git so `git::https://github.com/engineering11/…`
+#            module sources clone during `tofu init` — and so tf/pipeline/run.sh, a
+#            wrapper, can fetch sdk-terraform's pipeline at tf/sdk-terraform.ref.
+#   GitHub   a second repo-reacher token, narrowed to `environments: write` on
+#            APP_REPO, for the github-environment stack's variables. Never
+#            minted in bootstrap mode, and passed only to the late step, so
+#            bootstrap-admin's runs and the early stacks hold no GitHub credential.
+
+on:
+  workflow_call:
+    inputs:
+      project:
+        description: GCP project ID
+        type: string
+        required: true
+      mode:
+        description: bootstrap | plan | apply | drift
+        type: string
+        default: plan
+  workflow_dispatch:
+    inputs:
+      project:
+        description: GCP project to converge
+        type: choice
+        default: PLATFORM-ci-100
+        options:
+          - PLATFORM-ci-100
+          - PLATFORM-qa-100
+          - PLATFORM-prod-100
+      mode:
+        description: bootstrap (once per project), plan (dry run), apply, or drift
+        type: choice
+        default: plan
+        options: [bootstrap, plan, apply, drift]
+
+permissions:
+  contents: read
+  id-token: write # the OIDC assertion WIF exchanges for a GCP token
+  pull-requests: write # plan summary comment on PRs
+
+concurrency:
+  group: tf-converge-${{ inputs.project }}
+  cancel-in-progress: false # never interrupt an apply mid-flight
+
+env:
+  TOFU_VERSION: 1.13.1 # >= the newest OpenTofu that wrote any of this platform's state; state records its writer
+  PROJECT: ${{ inputs.project }}
+  MODE_FLAG: ${{ (inputs.mode == 'apply' || inputs.mode == 'bootstrap') && '--apply' || inputs.mode == 'drift' && '--drift' || '' }}
+  # bootstrap stops after pipeline-access: everything later is github-actions' job.
+  EARLY_TO: ${{ inputs.mode == 'bootstrap' && 'pipeline-access' || 'postgresql-access' }}
+  PIPELINE_TF_ATTEMPTS: 3
+  PIPELINE_TF_RETRY_DELAY: 60
+  TF_IN_AUTOMATION: 1
+
+jobs:
+  converge:
+    name: ${{ inputs.mode }} ${{ inputs.project }}
+    runs-on: ubuntu-latest
+    # GCP_WIF_PROVIDER / GCP_BOOTSTRAP_SERVICE_ACCOUNT are REPOSITORY variables,
+    # published by the PLATFORM-admin-100 admin stack.
+    #
+    # No `environment:` yet, deliberately. GitHub environments use the friendly names
+    # (dev, ci, qa, prod, demo), and a job that names one which does not exist creates
+    # it silently, with no protection. Prod is gated by ref instead: see "Production refs
+    # only" above.
+    timeout-minutes: 120 # GKE + Cloud SQL creation, plus retries
+
+    steps:
+      - name: Production refs only
+        if: ${{ inputs.mode == 'bootstrap' || inputs.project == 'PLATFORM-prod-100' }}
+        run: |
+          if [[ ! "$GITHUB_REF" =~ ^refs/heads/production(-.+)?$ ]]; then
+            echo "::error::${{ inputs.mode }} of $PROJECT runs from a production branch only (^refs/heads/production(-.+)?\$); this run is on $GITHUB_REF. GCP federation would refuse it."
+            exit 1
+          fi
+
+      - name: Apply from the project's branches only
+        if: ${{ inputs.mode == 'apply' && inputs.project != 'PLATFORM-prod-100' }}
+        env:
+          DEFAULT_REF: refs/heads/${{ github.event.repository.default_branch }}
+        run: |
+          case "$PROJECT" in
+            PLATFORM-ci-100) allowed='^'"$DEFAULT_REF"'$' ;;
+            PLATFORM-qa-100) allowed='^('"$DEFAULT_REF"'|refs/heads/qa(-.+)?)$' ;;
+            *) echo "::error::No apply rule for $PROJECT; add one to tf-converge.yml."; exit 1 ;;
+          esac
+          if [[ ! "$GITHUB_REF" =~ $allowed ]]; then
+            echo "::error::apply of $PROJECT runs from $allowed only; this run is on $GITHUB_REF. Merge first, or for qa push to a qa or qa-* branch."
+            exit 1
+          fi
+
+      # Before checkout, so every later clone — including tofu init's module fetches —
+      # goes through the rewritten git config. Default permission is contents:read.
+      - name: Authorize module sources (repo-reacher)
+        uses: e11community/repo-reacher@v1
+        env:
+          REPO_REACHER_APP_ID: ${{ vars.REPO_REACHER_APP_ID }}
+          REPO_REACHER_KEY: ${{ secrets.REPO_REACHER_KEY }}
+        with:
+          friends: |
+            engineering11/sdk-terraform
+
+      # Narrowed to the one permission the github-environment stack uses.
+      # `environments: write` covers environment VARIABLES; creating an environment
+      # would need administration=write, which this App deliberately does not hold.
+      # Not in bootstrap mode, which stops before any stack that writes to GitHub.
+      - name: Mint a GitHub token for the github-environment stack (repo-reacher)
+        id: reach
+        if: ${{ inputs.mode != 'bootstrap' }}
+        uses: e11community/repo-reacher@v1
+        env:
+          REPO_REACHER_APP_ID: ${{ vars.REPO_REACHER_APP_ID }}
+          REPO_REACHER_KEY: ${{ secrets.REPO_REACHER_KEY }}
+        with:
+          friends: |
+            OWNER/APP_REPO
+          permissions: |
+            environments: write
+
+      # persist-credentials: false is load-bearing. Otherwise checkout writes this run's
+      # GITHUB_TOKEN into the repo's git config as an auth header for all of github.com,
+      # which overrides repo-reacher's token — so `git ls-remote` / `tofu init` against
+      # engineering11/sdk-terraform get "Repository not found". Nothing here pushes;
+      # the PR comment authenticates with GH_TOKEN directly.
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      # bootstrap runs as bootstrap-admin; everything else as the project's own
+      # github-actions, whose email follows from the project ID.
+      - name: GCP auth (Workload Identity Federation)
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ inputs.mode == 'bootstrap' && vars.GCP_BOOTSTRAP_SERVICE_ACCOUNT || format('github-actions@{0}.iam.gserviceaccount.com', inputs.project) }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Set up OpenTofu
+        uses: opentofu/setup-opentofu@v2
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+          tofu_wrapper: false # the wrapper rewrites exit codes; --drift needs them intact
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      # The gen steps render through envtemplate — the same renderer as on a laptop.
+      - name: Install envtemplate
+        run: npm install -g @e11community/envtemplate
+
+      # Generated files (backend.tf, gcp-project.auto.tfvars) are committed. CI never
+      # regenerates them; it fails if they no longer match their templates.
+      - name: Generated files are current
+        run: tf/pipeline/run.sh "$PROJECT" --check
+
+      # plan/drift keep going past a failing step so every stack reports; the Result
+      # step at the end turns any failure back into a red job. apply stops at the first.
+      - name: Stacks up to ${{ inputs.mode == 'bootstrap' && 'pipeline-access' || 'postgresql-access' }}
+        id: early
+        continue-on-error: ${{ inputs.mode == 'plan' || inputs.mode == 'drift' }}
+        run: |
+          set -o pipefail
+          tf/pipeline/run.sh "$PROJECT" $MODE_FLAG --from services --to "$EARLY_TO" \
+            2>&1 | tee -a "$RUNNER_TEMP/converge.log"
+
+      # postgresql-gcp-project reaches the private-IP-only instance on 127.0.0.1:5432.
+      # A platform with no Cloud SQL stacks drops this step and the Close step, and runs
+      # every stack in one "Stacks" step (set EARLY_TO to the last stack).
+      # On a plan of a project whose postgresql stack has not been applied there is no
+      # instance to tunnel to, so a failure here only fails the job in apply mode.
+      - name: Open the IAP tunnel to Cloud SQL
+        if: ${{ inputs.mode != 'bootstrap' }}
+        continue-on-error: ${{ inputs.mode != 'apply' }}
+        run: PIPELINE_TOOL=steps/pg-tunnel.sh tf/pipeline/run.sh open "$PROJECT"
+
+      # github-environment runs here: the only stack that writes to GitHub.
+      - name: Stacks from postgresql-gcp-project
+        id: late
+        if: ${{ inputs.mode != 'bootstrap' }}
+        continue-on-error: ${{ inputs.mode != 'apply' }}
+        run: |
+          set -o pipefail
+          tf/pipeline/run.sh "$PROJECT" $MODE_FLAG --from postgresql-gcp-project \
+            2>&1 | tee -a "$RUNNER_TEMP/converge.log"
+        env:
+          TF_VAR_github_token: ${{ steps.reach.outputs.token }}
+
+      - name: Result
+        if: ${{ steps.early.outcome == 'failure' || steps.late.outcome == 'failure' }}
+        run: |
+          echo "::error::${{ inputs.mode }} of $PROJECT did not converge (early=${{ steps.early.outcome }}, late=${{ steps.late.outcome }}) — see the Summary"
+          exit 1
+
+      - name: Close the IAP tunnel
+        if: always()
+        run: PIPELINE_TOOL=steps/pg-tunnel.sh tf/pipeline/run.sh close "$PROJECT"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### tofu ${{ inputs.mode }} — \`$PROJECT\`"
+            echo
+            echo '<details><summary>pipeline output (last 400 lines)</summary>'
+            echo
+            echo '```'
+            tail -n 400 "$RUNNER_TEMP/converge.log" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g'
+            echo '```'
+            echo '</details>'
+          } > "$RUNNER_TEMP/summary.md"
+          cat "$RUNNER_TEMP/summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment the plan on the PR
+        if: ${{ always() && github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          # GitHub caps a comment at 65536 chars; keep the tail, it holds the result.
+          { echo "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"; echo;
+            tail -c 60000 "$RUNNER_TEMP/summary.md"; } > "$RUNNER_TEMP/comment.md"
+          gh pr comment "$PR" --repo "${{ github.repository }}" --body-file "$RUNNER_TEMP/comment.md"
+
+      # A saved plan or local state would carry resolved values, including the admin
+      # password the postgresql stack outputs. Nothing from the workspace is uploaded.
+      - name: Shred workspace plan files
+        if: always()
+        run: find tf/_impl -name '.tfplan' -delete
