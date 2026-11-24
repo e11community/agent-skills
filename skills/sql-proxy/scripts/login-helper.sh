@@ -6,7 +6,8 @@
 #
 # The agent orchestrates:
 #   1. Run this. It prints  BOOTSTRAP_CMD=<gcloud … --remote-bootstrap="…">  and  RESP_FILE=<path>.
-#   2. Run BOOTSTRAP_CMD locally — the local gcloud opens the browser; the user authenticates; the
+#   2. Ring the bell (scripts/beep.sh, best-effort; never blocks the login), then run BOOTSTRAP_CMD
+#      locally — the local gcloud opens the browser; the user authenticates; the
 #      command prints the remote-bootstrap response line (https://localhost:<port>/?state=…&code=…).
 #   3. Write that code into RESP_FILE. This script relays it to the bastion and prints ADC_LOGIN_DONE.
 set -uo pipefail
