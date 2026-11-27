@@ -252,7 +252,7 @@ worst case, executing whatever lands upstream.
 | Action             | Version | SHA                                      |
 | ------------------ | ------- | ---------------------------------------- |
 | dorny/paths-filter | 4.0.1   | fbd0ab8f3e69293af611ebaee6363fc25e6d187d |
-| nick-fields/try    | 4.0.0   | ad984534de44a9489a53aefd81eb77f87c70dc60 |
+| nick-fields/retry  | 4.0.0   | ad984534de44a9489a53aefd81eb77f87c70dc60 |
 
 ## Conventional commits drive the version
 
